@@ -836,6 +836,9 @@ if __name__ == "__main__":
     dbA_path = 'C:\\Users\\bcyk5\\OneDrive\\Documents\\ds projects big data\\get citations google scholar\\parallel scrape paper graph and author\\test1\\dataBase\\main_db_A.db'
     dbB_path = 'C:\\Users\\bcyk5\\OneDrive\\Documents\\ds projects big data\\get citations google scholar\\parallel scrape paper graph and author\\test1\\dataBase\\db_B.db'
     stuff = mainPaperScrapeLoop(dbA_path, dbB_path)
+    saveCurrent(stuff.author_info, 'author_info') 
+    saveCurrent(stuff.paperDict, 'paperDictA')
+
 
 if __name__ != "__main__":
     driver.get("https://scholar.google.com/citations?user=lMPmOH4AAAAJ&hl=en")
