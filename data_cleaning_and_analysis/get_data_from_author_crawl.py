@@ -2,23 +2,17 @@
 """
 Created on Tue Mar  9 14:13:49 2021
 
-Get the data output by the author_list crawler. This is stored in the outputs subfolder, with filename paperDictA______.pckl
-Then combine all data into lists and convert lists into a df. Baisc cleaning and formatting steps are also performed on the data
-so that it is ready to be used by the one_hot_encode script
-    1) reformat the date to a datetime object
-    2) convert any citation numbers listed as nan to 0
-    3) get time difference between published date and scrapped date
-    4) remove papers which don't hae an english title
-    5) perfrom any custom processing of the cited_num (may be desired so we don't get divide by 0
-                                                          error in downstream scripts')
-    6) calculate citations per year
-                                                       
-resulting df then saved
+3-25: processing takes too long. need to record which files already did, save 
+        the processed df as csv. aggratage results every few days so never have to 
+        process 10^6 at once
 
-This very slow to run, meant as a one time processing step. The bottle neck seems to be  checking if
-the title is in english                                                       
-                                                       
-@author: Ben Foley
+in progress 6pm 3-26 the defualt behavoir is to save the files read after each run. when the script is
+run again, the files read is loaded. files in files_read are skipped when loading
+the paperDicts.
+
+
+
+@author: bcyk5
 """
 
 import pandas as pd
@@ -33,7 +27,63 @@ from langdetect import detect, detect_langs
 
 from datetime import datetime
 
-def get_key_vals(keysToGet: set,dictIn: dict) -> dict:
+from generic_func_lib import *
+
+def load_all_dfs(out_dir) -> list:
+    """ loads all the dfs in the out dir into a list.
+    
+        If there are other csvs in the folder then this function
+        will think they are dataframes
+
+    Parameters
+    ----------
+    out_dir : TYPE
+        DESCRIPTION.
+
+    Returns
+    -------
+    df_list: list
+        A list of each pd.DataFame object saved as a .csv in the directory
+
+    """
+    
+    df_list = []
+    
+    for file in os.listdir(path):
+        if file.endswith('.csv'):
+            df_list.append(pd.read_csv(out_dir + "\\" + file))
+    
+    
+    return df_list
+
+
+def cat_dfs(df_list: list) -> pd.DataFrame:
+    """ cats all df in df list. will probably want to add some 
+        more logic in.
+        
+    Parameters
+    ----------
+    df_list : list
+        a list containing pd.DataFrame objects to be combined. These will
+        usually (but no always) have the same columns. 
+    
+    Returns
+    -------
+    df: pd.DataFrame
+        The data frame resulting from concatinating all the pd.DataFrames
+        in df_list
+        
+        
+    """
+    df = pd.DataFrame
+    
+    for frame in df_list:
+        df = pd.concat([df, frame])
+    
+    
+    return df
+
+def get_key_vals(keysToGet: set,dictIn: dict) -> dict: # i think this is also obsoleted
     def delKeys(singleDict):
         for key in list(singleDict.keys()):
             if key not in keysToGet:
@@ -82,7 +132,6 @@ def getPaths(main_dir: str, folderType: str, extension: str or None) -> list:
                     
     return tempList
     
-
 def load_dicts_from_dir(fileID: str, paths: list, keysToGet = None) -> dict:
     """ loads all pickle files which contain fileID into dictionary
         
@@ -101,12 +150,14 @@ def load_dicts_from_dir(fileID: str, paths: list, keysToGet = None) -> dict:
     None.
 
     """
+    files_read = set()
     tempDict = {}
     for path in paths:
         for file in os.listdir(path):
             if file.endswith('.pckl') and fileID in file:
                 #pathFile = path + "\\" + file
                 print(file)
+                files_read.add(file)
                 with open(path + "\\" + file,'rb') as f:
                     if keysToGet:
                         ### loadin file, removing unwanted keys, updating tempDict
@@ -114,9 +165,9 @@ def load_dicts_from_dir(fileID: str, paths: list, keysToGet = None) -> dict:
     
                     else:                                     
                         tempDict.update(pickle.load(f))
-    return tempDict
+    return tempDict, files_read
     
-def load_dicts_from_dir_to_list(fileID: str, paths: list, colNames: dict) -> list:
+def load_dicts_from_dir_to_list(fileID: str, paths: list, colNames: dict, files_read: set) -> list:
     """ modifying load_dicts_from_dir to output a list instead of dict. the list
         will then be made into a df
     
@@ -151,34 +202,35 @@ def load_dicts_from_dir_to_list(fileID: str, paths: list, colNames: dict) -> lis
     for path in paths:
         for file in os.listdir(path):
             if file.endswith('.pckl') and fileID in file:
-                #pathFile = path + "\\" + file
-                print(file)
-                
-                with open(path + "\\" + file,'rb') as f:
-                    temp_dict = pickle.load(f)
+                if file not in files_read:
+                    print(file)
+                    files_read.add(file)
+                    with open(path + "\\" + file,'rb') as f:
+                        temp_dict = pickle.load(f)
+                        
+                        # this is a nested dict
+                        for topKey in temp_dict.keys():
+                            temp_list = list_form.copy()
+                            for key in colNames.keys():
+                                try:
+                                    temp_list[colNames[key]] = temp_dict[topKey][key]
+                                except: 
+                                    temp_list[colNames[key]] = 'cant read from scrapper out'
+                            out_list.append(temp_list)
+                        # replace this block
+                        
+                        # tempList. append (new row)
                     
-                    # this is a nested dict
-                    for topKey in temp_dict.keys():
-                        temp_list = list_form.copy()
-                        for key in colNames.keys():
-                            try:
-                                temp_list[colNames[key]] = temp_dict[topKey][key]
-                            except: 
-                                temp_list[colNames[key]] = 'cant read from scrapper out'
-                        out_list.append(temp_list)
-                    # replace this block
-                    
-                    # tempList. append (new row)
-                    
-    return out_list
+    return out_list, files_read
 
-def loadPickled(path,fileName):
-    #import pickle
-    fileName = path + "\\" +  fileName
-    with open(fileName,'rb') as f:
-        outName = pckl.load(f)
-    
-    return outName
+
+
+
+
+
+# test = os.getcwd() + "\\" + path + "\\" + file
+# pickle.load(test)
+
 
 def readMergeDicts(dir2Read, keysToGet): ### obsoleted
     """ merges all the .pickle files with "paperDict" into one dict,
@@ -217,7 +269,11 @@ def readMergeDicts(dir2Read, keysToGet): ### obsoleted
     
     
 def getFirstAuthor(paperDict: dict) -> set:
-    """ getting the first 
+    """ getting the first author of each paper
+        Technically just getting the first author in the list. The authors appear
+        in the order they are listed on the paper (the first author will be first 
+        in the list). However, if the first author doesn't have a gs profile then 
+        highest ranked author who does will be first on the list'
 
 
     """
@@ -233,7 +289,8 @@ def getFirstAuthor(paperDict: dict) -> set:
     
     
 def allPapersDict_todf(allPapersDict: dict) -> pd.DataFrame:
-    """ converting the dict to dataFrame. want the author IDs as a list
+    """ CURRENTLY DEPREIATED, SWITCHED TO USEING LISTS
+        converting the dict to dataFrame. want the author IDs as a list
         right now they are a dict in the dict. loop through and update the
         keys, and get rid of cols we don't want. (dont need "raw" in 
         the df)
@@ -266,7 +323,7 @@ def allPapersDict_todf(allPapersDict: dict) -> pd.DataFrame:
     
 def dictToDF(dictIn, cols):
     """ trying to make a more generalized function to make a df from the dicts
-    
+        CURRENTLY DEPRECIATED, USING LISTS INSTEAD
 
     Parameters
     ----------
@@ -300,6 +357,8 @@ def isInDb(id_1: str, table: str, con: object) -> bool:
     
     """ checks to see if the id_1 is present in the index of the "table" TABLE
         in the database which is connected to "con"
+        
+        add hoc function sometimes used by me to check whats where
     """
     try: 
         sql = "SELECT EXISTS(SELECT 1 FROM " + table + " WHERE id=?)"
@@ -324,9 +383,23 @@ def isInDb(id_1: str, table: str, con: object) -> bool:
         return False
     
 def updateDbFirstAuthor(firstAuthors: set) -> None:
+    """ This is for manually adding more first authors to the firstauthors table
+    
+
+    Parameters
+    ----------
+    firstAuthors : set
+        The authors to be added to the sqlite3 db.
+
+    Returns
+    -------
+    None
+        data base updated, no return balue needed.
+
+    """
     table = 'firstauthors'
     # can i use an exisiting database function to insert 
-    dbPath = "C:\\Users\\bcyk5\OneDrive\\Documents\GitHub\\citation_prediction_from_google_scholar\\data_mining\\main_db_A.db"
+    dbPath = 'C:\\Users\\bcyk5\\OneDrive\\Documents\\ds projects big data\\get citations google scholar\\parallel scrape paper graph and author\\test1\\dataBase\\main_db_A.db'
     con = sqlite3.connect(dbPath)
 
     data = []
@@ -452,8 +525,12 @@ def clean_df(df):
         
         return df    
     
+    
+    
     # need to drop duplicates
     df = df.drop_duplicates(subset=['titleID'])
+    
+    
 
     cols_to_drop = ['all', 'title_main', 'Conference', 'Source', 'vol', 'issue', 'pages', 'urlID', 'description', \
                     'scrap_auth_id', 'citedYear']
@@ -466,9 +543,9 @@ def clean_df(df):
     df = df[df['Journal'] != "cant read from scrapper out"]
     
 #    df['is_en'] = df['titleID'].apply(lmbda x: custom_is_en(x))
-    
+    print('started removing non en')
     df = df[df['titleID'].apply(lambda x: custom_is_en(x)) == True] ### this is really slow
-    
+    print('done removing non en')
     # getting eyar
     df['year'] = df['pubDate'].apply(lambda x: x.split("/")[0])
     
@@ -495,34 +572,50 @@ def clean_df(df):
 
     return df
 
+
 if __name__ == "__main__":
     ### loading all the papers we've gotten so far from crawling the papers by citation
     
-    main_dir = "C:\\Users\\bcyk5\OneDrive\\Documents\GitHub\\citation_prediction_from_google_scholar\\data_mining\\"
+    main_dir = "C:\\Users\\bcyk5\\OneDrive\\Documents\\ds projects big data\\get citations google scholar\\parallel scrape paper graph and author\\test1\\"
     cur_dir = os.getcwd()
     
+    out_dir = cur_dir + "\\cleaned_data\\"
+    
+    files_read = load_one_pickled('files_read.pckl', out_dir)
+    #files_read = set()
     # this tells which position in the list corresponds to
     colNames = {"titleID": 0, "title_main": 1, "cited": 2, "Authors": 3, "pubDate": 4, \
                 "Journal": 5, "Conference": 6, "Source": 7, "vol": 8, "issue": 9, "pages": 10, "publisher": 11, \
                 "description": 12, "citedYear": 13, "scrap_auth_id": 14, "urlID": 15, \
                 "all": 16}
     
-    dirs_to_read = getPaths(main_dir, "authorList_", "outputs")
+    dirs_to_read = getPaths(main_dir, "authorList_V2-7", "outputs")
     
     ##### temp to readuce amount of data
     #dirs_to_read = dirs_to_read[len(dirs_to_read) - 3:-1]
     
     keysToGet = set(['titleID', 'cited', 'authors', 'authors', 'pubDate', 'journal'])
-    papersDict = load_dicts_from_dir("paperDictA", dirs_to_read, keysToGet)
+    #papersDict, files_read = load_dicts_from_dir("paperDictA", dirs_to_read, keysToGet)
     
-    papers = load_dicts_from_dir_to_list("paperDictA", dirs_to_read, colNames)
+    papers, files_read = load_dicts_from_dir_to_list("paperDictA", dirs_to_read, colNames, files_read)
     
     df = paperlist_to_df(papers)
     
     
     df = clean_df(df)
     
-    df.to_csv('current_df_to_be_one_hot_encoded.csv')
+    ############ going to save each df seperately for now
+    now = datetime.now()
+    dt = now.strftime("%d/%m/%Y %H:%M:%S")
+    dt = dt.replace('/','-')
+    dt = dt.replace(':','_')
+    fileName = "df_for_results_"
+    fileName = fileName + '_' + dt    
+    
+    df.to_csv(out_dir + fileName + '.csv')
+    #df.to_csv(out_dir + 'current_df_to_one_hot_encode2.csv')
+    
+    save_pickles([files_read],['files_read'],out_dir)
     #firstAuthors = getFirstAuthor(papers)
     # author_dirs = getPaths("authorList", "outputs")
     # author_papers = load_dicts_from_dir("paperDictA", author_dirs)

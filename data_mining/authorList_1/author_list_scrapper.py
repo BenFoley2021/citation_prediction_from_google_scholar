@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Created on Sun Mar  7 17:36:34 2021
-
+V_2_7_3
 @author: Ben
 """
 
@@ -44,7 +44,7 @@ class pathHeadA():
         currentTime = currentTime.replace("/","-")
         currentTime = currentTime.replace(":","-")
         
-        self.scrappedByID = '2_7 ' + str(currentTime) # this ID will be used to keep track of version found which papers and authors. the pathID arg will always be the same for this run of the crawl
+        self.scrappedByID = '2_7_3 ' + str(currentTime) # this ID will be used to keep track of version found which papers and authors. the pathID arg will always be the same for this run of the crawl
         self.urlBase = "https://scholar.google.com/citations?user="
         self.url = None
         self.urlEnd = "&hl=en"
