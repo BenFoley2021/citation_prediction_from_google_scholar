@@ -2,28 +2,6 @@
 """
 Created on Sun Mar  7 17:36:34 2021
 
-checking to see if scrapping with selenium is realistic
-
-mostly worried about gs kicking the bot off
-
-leaving off 6pm 3-9: getting all data for a paper, at getting the citations
-
-2_1 adding a function to scrape author info (name, affliation, )
-
-2_6
-    
-    need to make sure the journal is right. when there's a "source' or "confrence"
-    instead of journal the wrong name can be returned"
-    
-    would help if could remove elements after their info was used.
-    
-    already tried limiting search to the gsc_vcd_table node
-    it still seems to also search the things in the background
-    
-2_7_2 want to tighten the criteria 
-    tighten confrence criteria 
-    add book criteria
-
 @author: Ben
 """
 
@@ -235,6 +213,8 @@ class pathHeadA():
         
         #start of main function script
         sources = ["Journal", "Source", "Conference", "Book"] # the possible places where the work could be published
+        unwanted_sources = ["tbd", "under review", "in review", "not published", "poster"]
+
 
         is_conference() ### is it a confrences with no cites
         is_book() # is it a book with no cites
@@ -698,7 +678,7 @@ def is_author_sketchy(papers,author_info):
     chinese_cities = ["China" , "Chinese", "Shanghai", "Beijing", "Chongqing", "Tianjin", "Guangzhou", \
                   "Shenzhen", "Chengdu", "Nanjing", "Wuhan"]
     
-    domains = ["edu.cn", "edu.in", "gov.in", "gov.cn", "my.edu"]
+    domains = ["edu.cn", "edu.in", "gov.in", "gov.cn", "my.edu", "ac.in"]
         
     non_usa_list = indian_cities + chinese_cities + domains
     
@@ -804,7 +784,7 @@ def mainPaperScrapeLoop(dbA_path: str, dbB_path: str):
     paper_save_param = 1000 ### after this many papers, dump the paper data to disk
     crawler = pathHeadA(dbA_path, dbB_path) # intialize object
     missed = []
-
+    
     scrape = True
     try: # this try block is so the program saves any progress if manually interupted
         while scrape == True:
@@ -846,6 +826,7 @@ def mainPaperScrapeLoop(dbA_path: str, dbB_path: str):
         print(traceback.format_exc())
         saveCurrent(crawler.author_info, 'author_info') 
         saveCurrent(crawler.paperDict, 'paperDictA')
+        mainPaperScrapeLoop(dbA_path, dbB_path) # try to reset everything by calling itself
         return crawler
     return None
 
