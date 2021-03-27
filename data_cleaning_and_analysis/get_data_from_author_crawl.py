@@ -17,7 +17,6 @@ the paperDicts.
 
 import pandas as pd
 import numpy as np
-
 import pickle
 import os
 import pickle as pckl
@@ -29,59 +28,7 @@ from datetime import datetime
 
 from generic_func_lib import *
 
-def load_all_dfs(out_dir) -> list:
-    """ loads all the dfs in the out dir into a list.
-    
-        If there are other csvs in the folder then this function
-        will think they are dataframes
 
-    Parameters
-    ----------
-    out_dir : TYPE
-        DESCRIPTION.
-
-    Returns
-    -------
-    df_list: list
-        A list of each pd.DataFame object saved as a .csv in the directory
-
-    """
-    
-    df_list = []
-    
-    for file in os.listdir(path):
-        if file.endswith('.csv'):
-            df_list.append(pd.read_csv(out_dir + "\\" + file))
-    
-    
-    return df_list
-
-
-def cat_dfs(df_list: list) -> pd.DataFrame:
-    """ cats all df in df list. will probably want to add some 
-        more logic in.
-        
-    Parameters
-    ----------
-    df_list : list
-        a list containing pd.DataFrame objects to be combined. These will
-        usually (but no always) have the same columns. 
-    
-    Returns
-    -------
-    df: pd.DataFrame
-        The data frame resulting from concatinating all the pd.DataFrames
-        in df_list
-        
-        
-    """
-    df = pd.DataFrame
-    
-    for frame in df_list:
-        df = pd.concat([df, frame])
-    
-    
-    return df
 
 def get_key_vals(keysToGet: set,dictIn: dict) -> dict: # i think this is also obsoleted
     def delKeys(singleDict):
@@ -222,10 +169,6 @@ def load_dicts_from_dir_to_list(fileID: str, paths: list, colNames: dict, files_
                         # tempList. append (new row)
                     
     return out_list, files_read
-
-
-
-
 
 
 # test = os.getcwd() + "\\" + path + "\\" + file
@@ -449,7 +392,7 @@ def paperlist_to_df(paper_list):
     
     return df
     
-def clean_df(df):
+def clean_df(df, cols_to_return):
     """ using lots of functions from raw data to to bag of words
         
         want all the basic cleaning and formatting steps to be in one function.
@@ -517,7 +460,7 @@ def clean_df(df):
         except:
             return False
     
-    def mod_cited_data(df):
+    def mod_cited_data(df, cols_to_return):
     
         df['cited_num_mod'] = df['cited_num'] + 1
         
@@ -530,17 +473,7 @@ def clean_df(df):
     # need to drop duplicates
     df = df.drop_duplicates(subset=['titleID'])
     
-    
-
-    cols_to_drop = ['all', 'title_main', 'Conference', 'Source', 'vol', 'issue', 'pages', 'urlID', 'description', \
-                    'scrap_auth_id', 'citedYear']
-    
-    cols_to_return = ['titleID', 'Authors','Journal', 'publisher', 'year', 'cited_num', \
-                      'cites_per_year', 'date']
-        
-    df = df.drop(cols_to_drop, axis = 1)
-    
-    df = df[df['Journal'] != "cant read from scrapper out"]
+    #df = df[df['Journal'] != "cant read from scrapper out"]
     
 #    df['is_en'] = df['titleID'].apply(lmbda x: custom_is_en(x))
     print('started removing non en')
@@ -548,7 +481,6 @@ def clean_df(df):
     print('done removing non en')
     # getting eyar
     df['year'] = df['pubDate'].apply(lambda x: x.split("/")[0])
-    
     
     df['date'] =  df['pubDate'].apply(lambda x: custom_get_date(x))
 
@@ -566,9 +498,9 @@ def clean_df(df):
     
     df = df[df['cites_per_year'] >= 0]
     
-    df = mod_cited_data(df)
+    #df = mod_cited_data(df)
 
-    df = df[df['cites_per_year'] >= 0]
+    #df = df[df['cites_per_year'] >= 0]
 
     return df
 
@@ -585,9 +517,9 @@ if __name__ == "__main__":
     #files_read = set()
     # this tells which position in the list corresponds to
     colNames = {"titleID": 0, "title_main": 1, "cited": 2, "Authors": 3, "pubDate": 4, \
-                "Journal": 5, "Conference": 6, "Source": 7, "vol": 8, "issue": 9, "pages": 10, "publisher": 11, \
-                "description": 12, "citedYear": 13, "scrap_auth_id": 14, "urlID": 15, \
-                "all": 16}
+                "Journal": 5, "Conference": 6, "Source": 7, "book":8, "vol": 9, "issue": 10, "pages": 11, "publisher": 12, \
+                "description": 13, "citedYear": 14, "scrap_auth_id": 15, "urlID": 16, \
+                "all": 17}
     
     dirs_to_read = getPaths(main_dir, "authorList_V2-7", "outputs")
     
@@ -601,8 +533,12 @@ if __name__ == "__main__":
     
     df = paperlist_to_df(papers)
     
+    # only keeping these cols
+    cols_to_return = ['titleID',"title_main", 'Authors', 'Journal', "Conference", "Source", "book", \
+                      'publisher', "vol", "issue", 'year', "pages", 'cited_num', \
+                  'cites_per_year', 'date', 'scrap_auth_id', "citedYear", "urlID"]
     
-    df = clean_df(df)
+    df = clean_df(df, cols_to_return)
     
     ############ going to save each df seperately for now
     now = datetime.now()
@@ -616,16 +552,19 @@ if __name__ == "__main__":
     #df.to_csv(out_dir + 'current_df_to_one_hot_encode2.csv')
     
     save_pickles([files_read],['files_read'],out_dir)
+    
+    
+    
+    #df_list = load_all_dfs(out_dir)
+    
+    
     #firstAuthors = getFirstAuthor(papers)
     # author_dirs = getPaths("authorList", "outputs")
     # author_papers = load_dicts_from_dir("paperDictA", author_dirs)
     
     #updateDbFirstAuthor(firstAuthors)
 
-    
     #paper_graph_dirs = getPaths("paperGraph", "outputs")
-    
-    
     
     ### loading all the papers we've gotten so far by crawling the authors gs pages
     # tempDict = {}

@@ -27,6 +27,7 @@ from sklearn.model_selection import KFold
 from sklearn.model_selection import cross_val_score
 import xgboost as xgb
 import pickle as pckl
+from generic_func_lib import *
 #import tensorflow as tf
 
 def loadPickled2(path):
@@ -529,7 +530,8 @@ if __name__ == '__main__':
     resDict, misMatchList = packagePreds(preds,keys_test,ym_test,dicMain)
 
     # saving resDict
-    pckl.dump(resDict, open("resDict.pckl", "wb")) 
+    save_pickles([resDict], ["resDict.pckl"], "model_related_outputs")
+
 
     # shuffling
     #dicMainKeys, X, y = shuffle(dicMain, X, y)

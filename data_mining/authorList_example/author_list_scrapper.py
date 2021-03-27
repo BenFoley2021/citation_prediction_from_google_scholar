@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
 """
 Created on Sun Mar  7 17:36:34 2021
-V_2_7_3
+V_2_8 added another loop in if __main__ which restarts the mainPaperCrawlLoop if something goes wrong. the webdriver is now an attribute 
+of pathHeadA, so it gets reinitialied when this happens. number of times that the mainpapercrawl is restarted limited. added error log attribute
+of pathHeadA, when pathHeadA is returned the last time this should be visible
+
 @author: Ben
 """
 
@@ -21,9 +24,6 @@ import traceback
 
 from langdetect import detect, detect_langs
 
-driver = webdriver.Chrome('./chromedriver')
-
-
 class pathHeadA():
     """ this is to make it easier for me to keep track of the url and where to go next
         contains all the info which needs to be passed around when searching the current paper
@@ -36,14 +36,14 @@ class pathHeadA():
         The methods are for modifying the url to go the next page or the next articles
         cited by
     """
-    def __init__(self, dbA_path: str, dbB_path: str):
+    def __init__(self, dbA_path: str, dbB_path: str, main_loop_error: int, error_log: list):
         """ constructing  object 
         """
         now = datetime.now()
         currentTime = now.strftime("%d/%m/%Y %H:%M")
         currentTime = currentTime.replace("/","-")
         currentTime = currentTime.replace(":","-")
-        
+        self.driver = webdriver.Chrome('./chromedriver')
         self.scrappedByID = '2_7_3 ' + str(currentTime) # this ID will be used to keep track of version found which papers and authors. the pathID arg will always be the same for this run of the crawl
         self.urlBase = "https://scholar.google.com/citations?user="
         self.url = None
@@ -53,13 +53,13 @@ class pathHeadA():
         self.curAuthorID = None
         self.paperEr = None ### for errors while scraping a paper
         self.pageEr = None ### for errors on a page
-        self.apiEr = None ### error thrown by api. mostly this just tells use if we've run out of api calls
-        self.genEr = None ### other errors to keep track of which will be dealt with in the mainLoop
+        self.error_log = error_log ### error thrown by api. mostly this just tells use if we've run out of api calls
+        self.main_loop_error = main_loop_error ### other errors to keep track of which will be dealt with in the mainLoop
         self.alreadySeen = 0 # counter for how many papers we've already seen
         self.yeild = 0 # number of papers sucessfully gotten from a page
         self.author_info = {} # stores info on an author
         self.done_with_author = {"params": {"non_en": 0, "no_pubDate": 0, "missing_fields": 0, "confrence_no_cites": 0, \
-                                 "old_no_cites": 0, "no_title": 0, "book": 0}, "to_stop": False} # this will probably be a dict. need keep track of things which will be used to
+                                 "old_no_cites": 0, "no_title": 0, "book": 0, "not_real_paper": 0}, "to_stop": False} # this will probably be a dict. need keep track of things which will be used to
                                     # determine if we are currently mining useless data
         
         # dictionaries which contain info the authors and papers. these are the product of the program
@@ -102,7 +102,7 @@ class pathHeadA():
         """
         def check_if_done_w_author():
             
-            thresh3 = ['non_en', 'no_pubDate',"no_title"]
+            thresh3 = ['non_en', 'no_pubDate',"no_title", "not_real_paper"]
             thresh5 = ['confrence_no_cites',"old_no_cites", "missing_fields"]
             for key in thresh3:
                 if self.done_with_author['params'][key] > 2:
@@ -125,7 +125,7 @@ class pathHeadA():
         def is_conference():
             # need to check the Journal and Source to see if it's actually a confrence
 
-            confrence_words = ['confrence', 'confrence', 'abstract', 'Abstract', 'abstracts', 'Abstracts']
+            confrence_words = ['confrence', 'confrence', 'abstract', 'Abstract', 'abstracts', 'Abstracts', "bulletin"]
             keys_list = list(tempDict.keys())
             if "Confrence" in keys_list and (tempDict['cited'] == "NA" or tempDict['cited'] == "couldnt find"):
                 self.done_with_author["params"]["confrence_no_cites"] += 1
@@ -208,12 +208,23 @@ class pathHeadA():
             else:
                 self.done_with_author["params"]["missing_fields"] = 0 
                 
+                
+        def is_real_paper():
+            # people seem to put crap like their thesis, posters, papers that are still under review
+            # or random other bs on their scholar. if we hit these want to make a note of it
+            # for now this is kept as a seperate thing from confrences becuase it annoys me even more
+            for source in sources:
+                if source in tempDict:
+                    for string in unwanted_sources:
+                        if re.search(string, tempDict[source], re.IGNORECASE):
+                            self.done_with_author['params']['not_real_paper'] += 1
+                
         ########## start main function
         
         
         #start of main function script
         sources = ["Journal", "Source", "Conference", "Book"] # the possible places where the work could be published
-        unwanted_sources = ["tbd", "under review", "in review", "not published", "poster"]
+        unwanted_sources = ["tbd", "under review", "in review", "not published", "poster", "bulletin"]
 
 
         is_conference() ### is it a confrences with no cites
@@ -222,7 +233,7 @@ class pathHeadA():
         is_en() # is the title in english
         is_pub_date() # is there a publication date
         is_missing_fields() # what fraction of feilds are missing
-        
+        is_real_paper()
         ######### checking if done with author
         check_if_done_w_author()
         
@@ -438,7 +449,7 @@ class pathHeadA():
         
         # reseting the data used to determine if we are getting useful papers
         self.done_with_author = {"params": {"non_en": 0, "no_pubDate": 0, "missing_fields": 0, "confrence_no_cites": 0, \
-                         "old_no_cites": 0, "no_title": 0}, "to_stop": False} # this will probably be a dict. need keep track of things which will be used to
+                         "old_no_cites": 0, "no_title": 0, "not_real_paper": 0}, "to_stop": False} # this will probably be a dict. need keep track of things which will be used to
                             # determine if we are currently mining useless data
         
         #paperInfoDict = {}
@@ -456,13 +467,13 @@ class pathHeadA():
                 tempDict = {}
                 tempDict['titleID'] = titleID
                 try:
-                    driver.find_element_by_id("gsc_vcd_title").text
+                    self.driver.find_element_by_id("gsc_vcd_title").text
                 except:
                     print('first time trying to get gsc_vcd_title failed') ### somtimes the page takes awhile to load. if we can't find this node it means we need to wait longer
                     time.sleep(5)
                 
                 try:
-                    tempDict['title_main'] = driver.find_element_by_id("gsc_vcd_title").text
+                    tempDict['title_main'] = self.driver.find_element_by_id("gsc_vcd_title").text
                 except: 
                     tempDict['title_main'] = 'NA'
                     print('title_main exception')
@@ -471,7 +482,7 @@ class pathHeadA():
                 # the data, instead of the whole page
                 
 
-                html = driver.page_source
+                html = self.driver.page_source
                 soup = BeautifulSoup(html)
                 # names = ["Pages"]
                 # text_out, where_pub = get_where_pub(soup, names)
@@ -490,7 +501,7 @@ class pathHeadA():
                     print('pub date exepction')
                 
                 try:
-                    tempDict['all'] = driver.find_elements_by_id("gsc_ocd_bdy")[0].text
+                    tempDict['all'] = self.driver.find_elements_by_id("gsc_ocd_bdy")[0].text
                 except:
                     tempDict['all'] = 'NA'
                     print('all exception')
@@ -537,7 +548,7 @@ class pathHeadA():
                     print('description excemption')
         
                 try:
-                    cited = driver.find_elements_by_xpath("//div[@style='margin-bottom:1em']")    
+                    cited = self.driver.find_elements_by_xpath("//div[@style='margin-bottom:1em']")    
                     tempDict['cited'] = cited[0].text
                 except:
                     tempDict['cited'] = 'NA'
@@ -547,8 +558,8 @@ class pathHeadA():
                     
                 try:
                 # getting the graph of citation versus years
-                    years = driver.find_element_by_id("gsc_vcd_graph_bars").text
-                    citesYear = driver.find_elements_by_class_name("gsc_vcd_g_a")
+                    years = self.driver.find_element_by_id("gsc_vcd_graph_bars").text
+                    citesYear = self.driver.find_elements_by_class_name("gsc_vcd_g_a")
                     tempList = []
                     for thing in citesYear:
                         tempList.append(thing.find_element_by_css_selector("*").get_attribute('innerHTML'))
@@ -559,7 +570,7 @@ class pathHeadA():
             
                 ######## getting the cited url element
                 try:
-                    idEleParent = driver.find_elements_by_class_name("gsc_vcd_merged_snippet")
+                    idEleParent = self.driver.find_elements_by_class_name("gsc_vcd_merged_snippet")
                     idHref = idEleParent[0].find_element_by_class_name("gsc_oms_link").get_attribute('outerHTML')
                     tempDict['urlID'] = getCitedUrlID(idHref)
                 except: 
@@ -579,7 +590,7 @@ class pathHeadA():
                     return None 
 
                 ######## clicking the x button so the next paper will be visible, need to do this no matter what
-                xButton = driver.find_element_by_id("gs_md_cita-d-x")
+                xButton = self.driver.find_element_by_id("gs_md_cita-d-x")
                 xButton.click()
                 time.sleep(0.5)
             
@@ -587,7 +598,7 @@ class pathHeadA():
                 pass
         return None
 
-def getParentText(driver, textIn):
+def getParentText(driver, textIn): # this function no longer used
     # gets the text of the parent node found from the textIn
     tempVar = driver.find_element_by_xpath("//*[contains(text(), '" + \
                                                    textIn + "')]")
@@ -622,15 +633,15 @@ def isFloat(numIn): # simple function to check if str can be converted to float
         #print('bad cited str')
         return None
 
-def getAllPapers():
+def getAllPapers(crawler):
     
     time.sleep(2)
-    author_info = getAuthorInfo()
+    author_info = getAuthorInfo(crawler)
     showMore = True
     
     while showMore == True:
         try:
-            showMoreButton = driver.find_elements_by_xpath("//*[contains(text(), 'Show more')]") # getting the show more button
+            showMoreButton = crawler.driver.find_elements_by_xpath("//*[contains(text(), 'Show more')]") # getting the show more button
             
             parent = showMoreButton[0].find_element_by_xpath('..')
             parent2 = parent.find_element_by_xpath('..')
@@ -649,7 +660,7 @@ def getAllPapers():
        
     time.sleep(2)
     
-    papers = driver.find_elements_by_class_name("gsc_a_at") ##getting all the papers
+    papers = crawler.driver.find_elements_by_class_name("gsc_a_at") ##getting all the papers
     
     author_info['num_papers'] = len(papers)
     
@@ -696,14 +707,14 @@ def is_author_sketchy(papers,author_info):
     return author_info
     
 
-def getAuthorInfo():
+def getAuthorInfo(crawler):
     
     tempDict = {}
     
     # 
     try:
         # this node has all the author info in its children, if we can't get it no need to try the rest
-        authorEle = driver.find_elements_by_id("gsc_prf")[0]
+        authorEle = crawler.driver.find_elements_by_id("gsc_prf")[0]
 
         try:
             tempDict['name'] = authorEle.find_elements_by_id("gsc_prf_in")[0].text
@@ -759,7 +770,7 @@ def saveCurrent(dict2Save, fileName):
     savePickle(fileName, dict2Save, outDir)
 
 
-def mainPaperScrapeLoop(dbA_path: str, dbB_path: str):
+def mainPaperScrapeLoop(dbA_path: str, dbB_path: str, main_loop_error: int, error_log: list) -> pathHeadA:
     """ need to 
     1) initialize object
     while contiune = True
@@ -782,7 +793,7 @@ def mainPaperScrapeLoop(dbA_path: str, dbB_path: str):
     """
     limit = str(1000) # how many authors to grab from the db (one author will be randomly selected from this list for crawl)
     paper_save_param = 1000 ### after this many papers, dump the paper data to disk
-    crawler = pathHeadA(dbA_path, dbB_path) # intialize object
+    crawler = pathHeadA(dbA_path, dbB_path, main_loop_error, error_log) # intialize object
     missed = []
     
     scrape = True
@@ -795,9 +806,9 @@ def mainPaperScrapeLoop(dbA_path: str, dbB_path: str):
             
             pathHeadA.nextAuthor(crawler)
             pathHeadA.makeUrl(crawler)
-            driver.get(crawler.url)
+            crawler.driver.get(crawler.url)
             
-            papers, author_info = getAllPapers()
+            papers, author_info = getAllPapers(crawler)
             
             if author_info['sketchy'] == False and author_info['usa'] == True: # if the author looks suspicious then we skip
                 print('skipped author')
@@ -820,25 +831,39 @@ def mainPaperScrapeLoop(dbA_path: str, dbB_path: str):
             else: # if the author was suspocious we record having been there
                 pathHeadA.update_db_one_author(crawler)
 
-
     except:
         print('exception')
         print(traceback.format_exc())
+        crawler.driver.quit()
+        crawler.error_log.append(traceback.format_exc())
         saveCurrent(crawler.author_info, 'author_info') 
         saveCurrent(crawler.paperDict, 'paperDictA')
-        mainPaperScrapeLoop(dbA_path, dbB_path) # try to reset everything by calling itself
+        crawler.main_loop_error += 1
+         # if we have an error, end the session. the webdriver will be reintiialized when mainloop called again
+        #mainPaperScrapeLoop(dbA_path, dbB_path) # try to reset everything by calling itself
         return crawler
     return None
-
 
 if __name__ == "__main__":
     
     dbA_path = 'C:\\Users\\bcyk5\\OneDrive\\Documents\\ds projects big data\\get citations google scholar\\parallel scrape paper graph and author\\test1\\dataBase\\main_db_A.db'
     dbB_path = 'C:\\Users\\bcyk5\\OneDrive\\Documents\\ds projects big data\\get citations google scholar\\parallel scrape paper graph and author\\test1\\dataBase\\db_B.db'
-    stuff = mainPaperScrapeLoop(dbA_path, dbB_path)
-    saveCurrent(stuff.author_info, 'author_info') 
-    saveCurrent(stuff.paperDict, 'paperDictA')
-
+    
+    # the purpose of this loop is to restart the crawl if there's error that wasn't handled. Call 
+    # mainPaperScrapeLoop again and get a new crawler object(with new webdriver and db connections)
+    # the only thing thats carried over is the count of these errors. If it keeps throwing errors
+    # stop trying
+    scrape = True
+    main_loop_error = 0
+    error_log = []
+    while scrape == True:
+        crawler = mainPaperScrapeLoop(dbA_path, dbB_path, main_loop_error, error_log)
+        saveCurrent(crawler.author_info, 'author_info') 
+        saveCurrent(crawler.paperDict, 'paperDictA')
+        main_loop_error = crawler.main_loop_error
+        error_log = crawler.error_log
+        if main_loop_error > 4:
+            scrape = False
 
 if __name__ != "__main__":
     driver.get("https://scholar.google.com/citations?user=lMPmOH4AAAAJ&hl=en")
