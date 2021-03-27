@@ -39,7 +39,7 @@ def make_db():
     """
     
 
-    db_name = 'main_db_A.db'
+    db_name = 'main_db_A_example.db'
     path = os.getcwd()
     path = path + "\\" + db_name
     
