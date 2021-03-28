@@ -44,7 +44,7 @@ class pathHeadA():
         currentTime = currentTime.replace("/","-")
         currentTime = currentTime.replace(":","-")
         self.driver = webdriver.Chrome('./chromedriver')
-        self.scrappedByID = '2_7_3 ' + str(currentTime) # this ID will be used to keep track of version found which papers and authors. the pathID arg will always be the same for this run of the crawl
+        self.scrappedByID = '2_8 ' + str(currentTime) # this ID will be used to keep track of version found which papers and authors. the pathID arg will always be the same for this run of the crawl
         self.urlBase = "https://scholar.google.com/citations?user="
         self.url = None
         self.urlEnd = "&hl=en"
@@ -688,10 +688,11 @@ def is_author_sketchy(papers,author_info):
 
     chinese_cities = ["China" , "Chinese", "Shanghai", "Beijing", "Chongqing", "Tianjin", "Guangzhou", \
                   "Shenzhen", "Chengdu", "Nanjing", "Wuhan"]
-    
-    domains = ["edu.cn", "edu.in", "gov.in", "gov.cn", "my.edu", "ac.in"]
+    other_places = ["indonesia", "china", "india", "malaysia", "africa", "Guatemala", "Nigeria"]
         
-    non_usa_list = indian_cities + chinese_cities + domains
+    domains = ["edu.cn", "edu.in", "gov.in", "gov.cn", "my.edu", "ac.in", "ac.id", "ac.my", "gov.br", "ac.br"]
+        
+    non_usa_list = indian_cities + chinese_cities + domains + other_places
     
     author_keys_to_check = ['verEmail', 'rank']
     author_info['usa'] = True
