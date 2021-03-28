@@ -14,7 +14,7 @@ import seaborn as sns
 #from rawDataToBagOfWords_oneHotEncode_3 import *
 
 import os
-
+from generic_func_lib import *
 #from makingPrelimAnalFigs import *
 
 os.getcwd()
@@ -81,6 +81,8 @@ def getRelativeRes(x):
     
         this metric (or similar) is a candiate for a custom loss function in future work
     
+        The current problem is how to make this handle when the min is 0. Easiest to just 
+        let the model predict on the raw data, and put +1 in the denominator 
     """
     
     return (x.pred - x.actual)/min(x.pred,x.actual)
@@ -94,13 +96,16 @@ def basicHist(df2,col,xLow,xHigh,bins):
     resDist.set(xlabel='residual')
 
 
+if __name__ == "__main__":
+    
+    res_dict_to_read = load_one_pickled("resDict.pckl", "model_related_outputs")
+    
+    df_list = load_all_dfs("cleaned_data")
+    df_to_read = cat_dfs(df_list)
+    
+    df2 = setUp(df_to_read, res_dict_to_read)
+    df2['relativeRes'] = df2.apply(getRelativeRes, axis =1)
 
-res_dict_to_read = "resDict.pckl"
-df_to_read = "current_df_to_be_one_hot_encoded.csv"
-
-df2 = setUp(df_to_read, res_dict_to_read)
-
-df2['relativeRes'] = df2.apply(getRelativeRes, axis =1)
 #df2 = pd.read_csv('resDF_2-26.csv')
 
 if __name__ != "__main__":

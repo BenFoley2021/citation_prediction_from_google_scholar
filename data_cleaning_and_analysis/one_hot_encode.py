@@ -16,7 +16,7 @@ import numpy as np
 import time
 import scipy.sparse
 from scipy.sparse import coo_matrix, lil_matrix
-
+from generic_func_lib import *
 
 def getYear(dfAll):
     import numpy as np
@@ -878,22 +878,8 @@ def words2ModelInput(inputDict, dicWord2Vec):
 
 if __name__ == "__main__":
     ############ load the data, keeping the ids col as a str
-    df = pd.read_csv('current_df_to_be_one_hot_encoded.csv') 
-    #df['ids'] = df['ids'].astype('str')
-    
-    ######## removing rows where title doesn't match scrapeTitle
-    #df = removeBadScrap(df)
-    #################
-    
-    ###### randomizing order of df
-    #df = df.sample(frac=1)
-    
-
-
-    ##### want to go from jref to journal 
-    # df = getJournalName2(df)
-    # #saved "cleanedDF_11am_2-24 at this point
-    # df['jName'] = tempCleanJName(df)
+    df_list = load_all_dfs("cleaned_data")
+    df = cat_dfs(df_list)
     
     ### loading spacy library and stopwords
     nlp = spacy.load('en_core_web_sm')
