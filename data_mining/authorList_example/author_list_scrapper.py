@@ -113,7 +113,7 @@ class pathHeadA():
                     return None
         
             for key in thresh5:
-                if self.done_with_author['params'][key] > 2:
+                if self.done_with_author['params'][key] > 3:
                     self.done_with_author['to_stop'] = True
                     return None
         
@@ -242,13 +242,9 @@ class pathHeadA():
         
         return None
         
-        
-        
-        
     def getAnAuthorList(self, limit):
         """ gets a list of authors to put in the stack and scrape. if fails, exit program
         
-
         Returns
         -------
         None.
@@ -439,9 +435,6 @@ class pathHeadA():
                 else:
                     return None
             
-                
-            #names = ["Journal", "Source", "Conference"]
-            
             for name in names:
                 result = get_tag(soup, name)
                 if result:
@@ -452,7 +445,7 @@ class pathHeadA():
         
         # reseting the data used to determine if we are getting useful papers
         self.done_with_author = {"params": {"non_en": 0, "no_pubDate": 0, "missing_fields": 0, "confrence_no_cites": 0, \
-                         "old_no_cites": 0, "no_title": 0, "not_real_paper": 0}, "to_stop": False} # this will probably be a dict. need keep track of things which will be used to
+                         "old_no_cites": 0, "no_title": 0, "not_real_paper": 0, "book": 0}, "to_stop": False} # this will probably be a dict. need keep track of things which will be used to
                             # determine if we are currently mining useless data
         
         #paperInfoDict = {}
@@ -483,14 +476,10 @@ class pathHeadA():
                     
                 # for the rest of the things, we want to limit our search the parent node which contains 
                 # the data, instead of the whole page
-                
-
                 html = self.driver.page_source
                 soup = BeautifulSoup(html)
                 # names = ["Pages"]
                 # text_out, where_pub = get_where_pub(soup, names)
-                    
-                
                 try:
                     tempDict['Authors'] = get_data_field(soup, ['Authors'])[0]
                 except:
@@ -618,15 +607,6 @@ def getCitedUrlID(textIn):
     endInd = textIn.find('&amp')
     
     return isFloat(textIn[0:endInd])
-
-# def get_paper_id_href(textIn: str) -> str:
-#     """ 
-#     """
-#     startInd = textIn.find('hl=en&amp;cites=') + len('hl=en&amp;cites=')
-#     textIn = textIn[startInd:]
-    
-#     endInd = textIn.find('&amp')
-
 
 def isFloat(numIn): # simple function to check if str can be converted to float
     try:
@@ -845,7 +825,7 @@ def mainPaperScrapeLoop(dbA_path: str, dbB_path: str, main_loop_error: int, erro
         saveCurrent(crawler.author_info, 'author_info') 
         saveCurrent(crawler.paperDict, 'paperDictA')
         crawler.main_loop_error += 1
-        time.sleep(300 + random.randrange(1,100))
+        time.sleep(360 + random.randrange(1,100))
          # if we have an error, end the session. the webdriver will be reintiialized when mainloop called again
         #mainPaperScrapeLoop(dbA_path, dbB_path) # try to reset everything by calling itself
         return crawler
