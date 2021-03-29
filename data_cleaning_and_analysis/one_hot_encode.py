@@ -7,6 +7,16 @@ converts the input df into one hot encoded outputs
 misc to do:
     strip (the autors have blank space)
 
+to do today:
+    change any synomym consolidation things so they save an intermediate hash map
+    which points from the token that will be present in dicMain to the key is
+    present in dicBow
+    
+to do this week:
+    break popBow and setUpBow down into smaller functions so they are more readable.
+    this encoding is the meat of the project, and should be easily readable, since 
+    hopefully someonw will actually look at it
+
 @author: Ben Foley
 """
 
@@ -18,40 +28,16 @@ import scipy.sparse
 from scipy.sparse import coo_matrix, lil_matrix
 from generic_func_lib import *
 
-def getYear(dfAll):
-    import numpy as np
-
-    def custom1(y):
-    
-        years = np.linspace(1990,2020,31).astype(int).tolist()
-        for i,year in enumerate(years):
-            years[i] = str(year)
-            if years[i] in y:
-                #print(years[i])
-                return years[i]
-    
-    
-    dfAll['year'] = ''
-    dfAll['year'] = dfAll['jref'].apply(lambda y: custom1(y))
-    
-    dfAll = dfAll[dfAll['year'] != None]
-    dfAll = dfAll.dropna(axis = 0, subset =['year'])
-    dfAll['year'] = dfAll['year'].astype(str)
-    
-    return dfAll
-
-def getTok2(dfIn):
-    
+def getTok2(dfIn, col, col_2_write):
+    """ Using spacy to get the tokens from the title
+    """
     tokens = []
     #start = time.time()
     #disable = ["tagger", "parser","ner","textcat"]
-    for doc in nlp.pipe(df['titleID'].astype('unicode').values):#,disable = disable):
+    for doc in nlp.pipe(df[col].astype('unicode').values):#,disable = disable):
         #doc.text = doc.text.lower()
         #tokens.append([token.text.lower() for token in doc if not token.is_stop])
-        
         tempList = ([token.lemma_ for token in doc])
-    
-    
         for i,string in enumerate(tempList):
             try:
                 tempList[i] = string.lower()
@@ -59,9 +45,7 @@ def getTok2(dfIn):
                 print(string)
     
         tokens.append(tempList)
-    
-    dfIn['tokens'] = tokens
-    
+    dfIn[col_2_write] = tokens
     return dfIn
 
 def updateBowDict(tokens,dicBow):
@@ -83,10 +67,10 @@ def setUpBow2(dfIn, extraWords):  #### adding the extra words to the list after 
     dicBow = {} ##### the dictionary storing the words for the BOW
     dicMain = {} #### dictionary with the row (or paper) id as the key, times cited, tokens, and number of tokens to be actually used in the model as values
     print('starting on getting toks')
-    dfIn = getTok2(dfIn)  ##### getting tokens (or lemma) and adding the list as a new col in the df. # this is fairly slow
+    dfIn = getTok2(dfIn, 'titleID', 'tokens')  ##### getting tokens (or lemma) and adding the list as a new col in the df. # this is fairly slow
     print('got tokens')
 
-    def custom2(x):
+    def get_toks_from_non_title_cols(x):
         #### adds to the list of toks in the tokens column
         ### extra info not in the title is added so it can be used in the bag of words
         tempList= []
@@ -98,17 +82,21 @@ def setUpBow2(dfIn, extraWords):  #### adding the extra words to the list after 
                 
         return x['tokens'] +  tempList
 
-    dfIn['tokens'] = dfIn.apply(custom2, axis=1)
-
-    for i,row in dfIn.iterrows(): ###### looping through the dataframe (now with tokens/lemma) and building the dictionaries
-        if i%2000 == 0:
-            print(i)
+    def iter_df_make_bow_and_main(dfIn, dicBow, dicMain):
+        for i,row in dfIn.iterrows(): ###### looping through the dataframe (now with tokens/lemma) and building the dictionaries
+            if i%2000 == 0:
+                print(i)
+            
+            dicBow = updateBowDict(row['tokens'],dicBow)  #### update the bag of words dictionary 
+            ##### add the extraWords in here
         
-        dicBow = updateBowDict(row['tokens'],dicBow)  #### update the bag of words dictionary 
-        ##### add the extraWords in here
-    
-        ### updating the dict with row id, tokens, and cited by info
-        dicMain[str(i)] = [row['cites_per_year'],row['tokens'],0]#### the zero will be updated with the word count for that ids later
+            ### updating the dict with row id, tokens, and cited by info
+            dicMain[str(i)] = [row['cites_per_year'],row['tokens'],0]#### the zero will be updated with the word count for that ids later
+
+    return dicBow, dicMain
+
+    dfIn['tokens'] = dfIn.apply(get_toks_from_non_title_cols, axis=1)
+    dicBow, dicMain = iter_df_make_bow_and_main(dfIn, dicBow, dicMain)
 
     return dicBow, dicMain                                 
 
@@ -119,13 +107,31 @@ def removeFromDict(removeSet,dicIn): #### removes things add hoc from the dictio
 
     return dicIn
 
-def customProcTok(bowDic,symbol2Rem):
-    #### custom text parsing to remove some of the trash that made it through spacy tokenization
-    ### loop through the dicBow
-    ### if key has len 1 remove it
-    ### if it has any of the characters in symbol2rem
-    ### if it can be converted into a float
-    ### more than 2 characters of the string can be converted into a float
+def customProcTok(bowDic: dict,symbol2Rem: set) -> dict:
+    """ removes tokens which have lots of number or nonsense characters (those in symbol2Rem)
+    
+        custom text parsing to remove some of the trash that made it through spacy tokenization
+        loop through the dicBow
+        if key has len 1 remove it
+        if it has any of the characters in symbol2rem
+        if it can be converted into a float
+        more than 2 characters of the string can be converted into a float
+
+    Parameters
+    ----------
+    bowDic : Dict
+        The dict which keeps track of the words (or tokens) which are going into the 
+        one hot encoded matrix
+    symbol2Rem : Set
+        Set of symbols, if a token contains these symbols, we remove it.
+
+    Returns
+    -------
+    tempDic : Dict
+        The updated dicBow after removeing tokens.
+
+    """
+
     years = np.linspace(1990,2021,32).astype(int).tolist()
     years = [str(i) for i in years]
     years = set(years)
@@ -139,7 +145,6 @@ def customProcTok(bowDic,symbol2Rem):
         write = True  
         if key in okSet:
             pass
-        
         else: 
             try:
                 for n in key:
@@ -152,102 +157,123 @@ def customProcTok(bowDic,symbol2Rem):
                     if n in symbol2Rem or count > 1:
                         write = False
                         break
-
                 try:
                     float(key)
                     write = False
                     continue
                 except:
                     pass
-        
                 if len(key) < 1:
                     write = False
                     continue    
-                
                 if len(key) < 3 and key not in okSet:
                     write = False
                     continue  
             except:
                 write = False
 
-
-
         if write == True:
             tempDic[key] = bowDic[key]
 
-    return tempDic
+    return tempDic 
     
 def remTok(bowDic,set2Rem): ### i guess theres another ad hoc function to remove things from a dict
+    """ Removes keys in the set2Rem variables from the dictionary. 
     
+    Parameters:
+        dowDic: dicBow
+        set2Rem: Set. contains keys which are to be removed from bowDic if they
+        are found there
+        
+    Returns:
+        bowDic: The dictionary after desired keys have been removed
+    
+    """    
     for thing in set2Rem:
         try:
             bowDic.pop(thing,None)
         except:
             pass
-    
     return bowDic
 
 
-def popBow(dicBow: dict, dicMain: dict): ####### this is the main loop which contructs the one hot encoded matrix for input to
-    # various models
-    ## constructing a scipy sparse matrix
+def popBow(dicBow: dict, dicMain: dict, intermediate_dict: dict): ####### this is the main loop which contructs the one hot encoded matrix for input to
+    """ constructs the one hot endoded input
+    """
 
+    def make_word_to_vec_and_toks_per_paper():
+        """ making a dictionary which converts tokens to the position in the 
+            vector. Also making a copy of dicBow which keeps track of which papers
+            are using which tokens. 
+        """
+        dicWordPaper = dicBow.copy()  #### the keys are the words, values list of paper ids
+        dicWord2Vec = {} ### keeps track of which word corresponds to which col in bowVec
+        for i,key in enumerate(dicBow): 
+            dicWord2Vec[key] = i #putting the location of each word into the dict
+            dicWordPaper[key] = [] ### changing the value to emptylists
+        
+        return dicWord2Vec, dicWordPaper
 
-    label = [] #### label is the number of citations, what I will try to predict later
-
-    
-    bowVec = lil_matrix((len(dicMain), len(dicBow)), dtype=np.int8) ## this will hold the one hot encoded bow
-    
-    dicWord2Vec = {} ### keeps track of which word corresponds to which col in bowVec
-    wordVec = np.zeros(len(dicBow))  ### is the same length as the num of words in the bow
-    
-    ########adding another dict which keeps track of which papers have which words
-    dicWordPaper = dicBow.copy()  #### the keys are the words, values list of paper ids
-    
-    for i,key in enumerate(dicBow): 
-        dicWord2Vec[key] = i #putting the location of each word into the dict
-        dicWordPaper[key] = [] ### changing the value to emptylists
-    
-    indi = -1
-    for key in dicMain: ################## loop used to populate bowVec, as well update dicMain with the number of factors for each row (paper) that are being used in the model
-        indi = indi +1
+    def loop_tokens(key, dicMain, dicWordPaper, wordVec):
+        """ loops through the tokens contained in each item of dicMain
+        """
+        tempSet = set()
         dicBowTemp = dicBow.copy() ### getting copy of the bow and setting all keys to zero, will use this to count words for the current row
         dicBowTemp = dict.fromkeys(dicBowTemp, 0) #setting all keys to 0 https://stackoverflow.com/questions/13712229/simultaneously-replacing-all-values-of-a-dictionary-to-zero-python
-        
-        wordVecTemp = wordVec.copy()
-        label.append(dicMain[key][0]) ### label is the number of citations, what I will try to predict later
-        tempSet = set()
-        for tok in dicMain[key][1]: ### looping through the tokens stored in dicMain
             
-            try: #### the token may have been removed as a model input, so I need to check if it's still in dicBow
+        for tok in dicMain[key][1]: ### looping through the tokens stored in dicMain
+            #### need to check if the tok is in the intermediate dictionary
+            # if this token got merged with another one (e.g. batteries -> battery)
+            # then we change the tok to its base (lemma, root, whatever), as thats 
+            # what will be in dicBow
+            if tok in intermediate_dict:
+                tok = intermediate_dict[tok]
+        
+            if tok in dicBowTemp:
+        
                 dicBowTemp[tok] = dicBowTemp[tok] + 1 #### #times the word is present
-                
                 dicWordPaper[tok].append(key)  ###### adding the id of the paper which has that word
                 tempSet.add(tok) ###adding the token to a set which will be used to update the sparse array later
                 dicMain[key][2] = dicMain[key][2] + 1 #### keeping track of how many words from this ids are still going to be used
-            except:
-                pass
+
+        return dicMain, dicBowTemp, dicWordPaper, tempSet
+
+    def update_bowVec(tempSet, dicWord2Vec, bowVec, dicBowTemp, indi):
         
         for item in tempSet:  ### looping through the tokens encountered for this row (paper) and updating the one hot encoding 
-
             indj = dicWord2Vec[item] ## getting the index (or column in the sparse matrix)
             try: #### at one point I was having trouble with indexing, so that's why its a try block
                 bowVec[indi,indj] = dicBowTemp[item]
-                
                 if dicBowTemp[item] < 0:
                     print('warning! negative word count in dicBowTemp')
-                    
                 if bowVec[indi,indj] < 0:
                     print('waring! negative word count in bowVec')
-                    
             except:
                 print(str(indi) + ' ' + str(indj))
+
+        return bowVec
+
+    def loop_dicMain(dicMain, bowVec, dicWordPaper):
+        """ loops through the main dictionary
+        """
         
-        # for j,key in enumerate(dicBowTemp): ############## this is the scaling problem.
-        # # only need to non zero ones
-        #     wordVecTemp[j] = dicBowTemp[key]
-        
-        #bowVec.append(wordVecTemp)
+        indi = -1
+        for key in dicMain: # loop used to populate bowVec, as well update dicMain with the number of factors for each row (paper) that are being used in the model
+            indi = indi +1
+            label.append(dicMain[key][0]) # label is the number of citations, what I will try to predict later
+            dicMain, dicBowTemp, dicWordPaper, tempSet = loop_tokens()
+            bowVec = update_bowVec(tempSet, dicWord2Vec, bowVec, dicBowTemp, indi)
+
+        return label, bowVec, dicWordPaper
+
+    # main function script, declaring variables 
+    label = [] #### label is the number of citations, what I will try to predict later
+    bowVec = lil_matrix((len(dicMain), len(dicBow)), dtype=np.int8) ## this will hold the one hot encoded bow    
+    wordVec = np.zeros(len(dicBow))  ### is the same length as the num of words in the bow
+    
+    dicWord2Vec, dicWordPaper = make_word_to_vec_and_toks_per_paper()
+    
+    bowVec, dicMain, dicWordPaper = loop_dicMain(dicMain, bowVec, dicWordPaper)
 
     return label,bowVec,dicWord2Vec,dicWordPaper  #### dicWordPaper is obsolete in this version
 
@@ -774,11 +800,21 @@ def buildCustomLookup(dicBow):
     return lookUpDict
 
 def condenseDicBow(dicBow,customLookUpDict):
+    """ converts tokens which were decided to have a root into that root.
+        eg. batteries -> battery
+        
+    PARAMS
+        dicBow: dict. The keys all tokens to be used in the one hot encoded model. 
+                        The values are the number of times that token has been used
+        customLookUpDict: dict. Maps tokens to their root, such as a key of "batteries"
+                            with a value of "battery".
+    """
+    
     for key in customLookUpDict:
         if key in dicBow:
             try:
-                dicBow[customLookUpDict[key]] += dicBow[key]
-                dicBow.pop(key)
+                dicBow[customLookUpDict[key]] += dicBow[key] # since we are combing the tokens, also need to combine the number of times it's present
+                dicBow.pop(key) # remove the key. (eg batteries is merged with battery, then the batteries key removed)
             except:
                 print('couldnt find ' + key)
 
@@ -879,24 +915,23 @@ def words2ModelInput(inputDict, dicWord2Vec):
 if __name__ == "__main__":
     ############ load the data, keeping the ids col as a str
     df_list = load_all_dfs("cleaned_data")
+    
+    # for testing we want this to run fast
+    df_list = df_list[0:1]
+    
     df = cat_dfs(df_list)
     
     ### loading spacy library and stopwords
     nlp = spacy.load('en_core_web_sm')
-
     spacy_stopwords = spacy.lang.en.stop_words.STOP_WORDS
-    
-    #toRemove = ['-']
     customize_stop_words = ['-','Single']  ##### adding custom stopwords
     for w in customize_stop_words:
         nlp.vocab[w].is_stop = True
 
     extraWords = ['year','Authors','Journal','publisher'] ####### cols from the df to be added to the bow
-    
-    toks2Rem = ['\n  ','--',"",',',"\to","..."]
-    
+    toks2Rem = ['\n  ','--',"",',',"\to","..."] # if we seem these tokens get rid of them
     symbol2Rem = set(['%','$','{','}',"^","/", "\\",'#','*',"'",\
-                  "''", '_','(',')', '..',"+",'-',']','['])
+                  "''", '_','(',')', '..',"+",'-',']','[']) # remove 
     
     start = time.time()
     dicBow,dicMain = setUpBow2(df,extraWords) ### get initial data
@@ -906,28 +941,7 @@ if __name__ == "__main__":
     ####################
     dicBow = customProcTok(dicBow,symbol2Rem) #### this isn't working right
     print('did customProcTok')
-    
-    
-    ### building a custom dictionary to key track of lemma
-    """ need to come back to this later when we have more stuff
-    """
-    
-    # custLemmaLookUP = buildCustomLookup(dicBow)
-    # dicBow = condenseDicBow(dicBow,custLemmaLookUP)
-    ####remove words with low counts here
-    thresh = 5
-    dicBow = trimBow2(dicBow, thresh)
-    
-    # threshAuthor = 9
-    # threshJournal = 9
-    # authorSet = set(df['submit'].to_list())
-    # journalSet = set(df['jName'].to_list())
-    
-    # this is the option for if we want different thresholds for different categories
-    #dicBow = trimBow3(dicBow,authorSet,journalSet,thresh,threshAuthor,threshJournal)
-    
-    
-    
+
     print('trimmed bow')
     ###############
     toks2Rem = ['\n  ','--',"",',',"\to","...","the", "what", "that", "then", \
@@ -935,12 +949,16 @@ if __name__ == "__main__":
     dicBow = remTok(dicBow,toks2Rem)
     ############### work on this later once we have more words
     dicBow = customLookUpSpacy(dicBow)
-    
+    word_to_root = buildCustomLookup(dicBow)
     start = time.time()
     print('starting popBow')
     """ this is also for later
     """
     #labelY,bowVecY,dicWord2Vec,dicWordPaper = popBow(dicBow,futureDict)
+    
+    thresh = 5
+    dicBow = trimBow2(dicBow, thresh)
+    
     
     labelX,bowVecX,dicWord2Vec,dicWordPaper = popBow(dicBow,dicMain)
     
