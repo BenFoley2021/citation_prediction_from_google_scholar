@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
 """
 Created on Sun Mar  7 17:36:34 2021
-V_2_8 added another loop in if __main__ which restarts the mainPaperCrawlLoop if something goes wrong. the webdriver is now an attribute 
+V_2_8_1  the execption in the main loop triggers a ~5 min wait before trying to reinitialze the crawler object and start again
+
+
+added another loop in if __main__ which restarts the mainPaperCrawlLoop if something goes wrong. the webdriver is now an attribute 
 of pathHeadA, so it gets reinitialied when this happens. number of times that the mainpapercrawl is restarted limited. added error log attribute
 of pathHeadA, when pathHeadA is returned the last time this should be visible
 
@@ -44,7 +47,7 @@ class pathHeadA():
         currentTime = currentTime.replace("/","-")
         currentTime = currentTime.replace(":","-")
         self.driver = webdriver.Chrome('./chromedriver')
-        self.scrappedByID = '2_8 ' + str(currentTime) # this ID will be used to keep track of version found which papers and authors. the pathID arg will always be the same for this run of the crawl
+        self.scrappedByID = '2_8_1 ' + str(currentTime) # this ID will be used to keep track of version found which papers and authors. the pathID arg will always be the same for this run of the crawl
         self.urlBase = "https://scholar.google.com/citations?user="
         self.url = None
         self.urlEnd = "&hl=en"
@@ -224,7 +227,7 @@ class pathHeadA():
         
         #start of main function script
         sources = ["Journal", "Source", "Conference", "Book"] # the possible places where the work could be published
-        unwanted_sources = ["tbd", "under review", "in review", "not published", "poster", "bulletin"]
+        unwanted_sources = ["tbd", "under review", "in review", "not published", "poster", "bulletin", "workshop"]
 
 
         is_conference() ### is it a confrences with no cites
@@ -688,9 +691,11 @@ def is_author_sketchy(papers,author_info):
 
     chinese_cities = ["China" , "Chinese", "Shanghai", "Beijing", "Chongqing", "Tianjin", "Guangzhou", \
                   "Shenzhen", "Chengdu", "Nanjing", "Wuhan"]
-    other_places = ["indonesia", "china", "india", "malaysia", "africa", "Guatemala", "Nigeria"]
+    other_places = ["indonesia", "china", "india", "malaysia", "africa", "Guatemala", "Nigeria", "brazil", \
+                    "chile"]
         
-    domains = ["edu.cn", "edu.in", "gov.in", "gov.cn", "my.edu", "ac.in", "ac.id", "ac.my", "gov.br", "ac.br"]
+    domains = ["edu.cn", "edu.in", "gov.in", "gov.cn", "my.edu", "ac.in", "ac.id", "ac.my", "gov.br", \
+               "ac.br", "edu.br"]
         
     non_usa_list = indian_cities + chinese_cities + domains + other_places
     
@@ -840,6 +845,7 @@ def mainPaperScrapeLoop(dbA_path: str, dbB_path: str, main_loop_error: int, erro
         saveCurrent(crawler.author_info, 'author_info') 
         saveCurrent(crawler.paperDict, 'paperDictA')
         crawler.main_loop_error += 1
+        time.sleep(300 + random.randrange(1,100))
          # if we have an error, end the session. the webdriver will be reintiialized when mainloop called again
         #mainPaperScrapeLoop(dbA_path, dbB_path) # try to reset everything by calling itself
         return crawler
