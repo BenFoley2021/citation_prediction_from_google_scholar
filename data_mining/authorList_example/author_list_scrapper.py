@@ -108,12 +108,12 @@ class pathHeadA():
             thresh3 = ['non_en', 'no_pubDate',"no_title", "not_real_paper"]
             thresh5 = ['confrence_no_cites',"old_no_cites", "missing_fields"]
             for key in thresh3:
-                if self.done_with_author['params'][key] > 2:
+                if self.done_with_author['params'][key] > 4:
                     self.done_with_author['to_stop'] = True
                     return None
         
             for key in thresh5:
-                if self.done_with_author['params'][key] > 3:
+                if self.done_with_author['params'][key] > 5:
                     self.done_with_author['to_stop'] = True
                     return None
         
@@ -121,7 +121,7 @@ class pathHeadA():
             for key in self.done_with_author['params'].keys():
                 count += self.done_with_author['params'][key]
             
-            if count > 9:
+            if count > 12:
                 self.done_with_author['to_stop'] = True
                 return None
         
@@ -221,6 +221,8 @@ class pathHeadA():
                     for string in unwanted_sources:
                         if re.search(string, tempDict[source], re.IGNORECASE):
                             self.done_with_author['params']['not_real_paper'] += 1
+                        else:
+                            self.done_with_author['params']['not_real_paper'] += 0
                 
         ########## start main function
         
@@ -672,10 +674,10 @@ def is_author_sketchy(papers,author_info):
     chinese_cities = ["China" , "Chinese", "Shanghai", "Beijing", "Chongqing", "Tianjin", "Guangzhou", \
                   "Shenzhen", "Chengdu", "Nanjing", "Wuhan"]
     other_places = ["indonesia", "china", "india", "malaysia", "africa", "Guatemala", "Nigeria", "brazil", \
-                    "chile"]
+                    "chile", "Brasília", "Brasilia", "mexico"]
         
     domains = ["edu.cn", "edu.in", "gov.in", "gov.cn", "my.edu", "ac.in", "ac.id", "ac.my", "gov.br", \
-               "ac.br", "edu.br"]
+               "ac.br", "edu.br", "edu.au", "gov.au", "ac.du"]
         
     non_usa_list = indian_cities + chinese_cities + domains + other_places
     
