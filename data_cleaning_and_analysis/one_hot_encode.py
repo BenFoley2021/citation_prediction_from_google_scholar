@@ -1235,7 +1235,7 @@ if __name__ == "__main__":
                     'publisher', 'vol', 'issue', 'pages', 'urlID', 'citedYear']
     
     df = df.drop(labels = cols_to_drop, axis = 1)
-    clean_authors(df)
+    #clean_authors(df)
     ### loading spacy library and stopwords
     nlp = spacy.load('en_core_web_sm')
     spacy_stopwords = spacy.lang.en.stop_words.STOP_WORDS
@@ -1243,7 +1243,7 @@ if __name__ == "__main__":
     for w in customize_stop_words:
         nlp.vocab[w].is_stop = True
 
-    extraWords = ['year','Authors','Journal','publisher'] ####### cols from the df to be added to the bow
+    extraWords = ['year','Authors','Journal'] ####### cols from the df to be added to the bow
     toks2Rem = ['\n  ','--',"",',',"\to","..."] # if we seem these tokens get rid of them
     symbol2Rem = set(['%','$','{','}',"^","/", "\\",'#','*',"'",\
                   "''", '_','(',')', '..',"+",'-',']','[']) # remove 

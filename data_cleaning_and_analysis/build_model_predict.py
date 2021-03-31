@@ -3,14 +3,27 @@
 Created on Mon Feb  1 20:20:04 2021
 
 to do:
-    make sure whole pipeline works, theres a few misc cleaning things which still need to be 
-    done downstream
+    add custom objective function and metric for xgboost and tf
+    # xgboost, start with just first order
+    
+    objective function id like
+    obj = abs(y - pred)/min(y, pred) # need to test this to make the min works
+    as intended
+    
+    resources 
+    https://xgboost.readthedocs.io/en/latest/tutorials/custom_metric_obj.html
+    
+    https://stats.stackexchange.com/questions/484340/the-hessian-in-xgboost-loss-function-doesnt-look-like-a-square-matrix
     
     k fold cross val with xgboost
     resuources 
         https://www.kaggle.com/prashant111/xgboost-k-fold-cv-feature-importance
         https://machinelearningmastery.com/evaluate-gradient-boosting-models-xgboost-python/
         
+        
+    general xgboost 
+    https://projector-video-pdf-converter.datacamp.com/3679/chapter2.pdf
+    https://github.com/tqchen/xgboost/tree/master/demo    
 @author: Ben Foley
 """
 
@@ -28,6 +41,8 @@ from sklearn.model_selection import cross_val_score
 import xgboost as xgb
 import pickle as pckl
 from generic_func_lib import *
+
+
 #import tensorflow as tf
 
 def loadPickled2(path):
@@ -113,22 +128,6 @@ def loadInputData2(): ### another ad hoc function to load the data for when the 
     
     
     return var_names_dict, var_names_npz
-    
-    ### old code to be moved to another function
-    # target = inputs[2]
-    # dicBow = inputs[0]
-    # dicMain = inputs[1]
-    
-    # target = np.asarray(target)
-    # #target = np.log(target)
-    # print('loaded inputs')
-    
-    # y = np.asarray(target)
-    # #X = np.asarray(bowVec)
-    # y = target
-    # print('changed to np arrays')
-    
-    # return X,y, inputs,names
 
 
 def tryCrossVal(X,y,model): #### not used in current run
@@ -256,22 +255,79 @@ def runXGboost(Xm_train,ym_train):# ,ym_train,ym_test,keys_train,keys_test,cited
 
     """
     import xgboost as xgb
+    from typing import Tuple
+    ###########################
+    # example code for custom objective function
+    def gradient_c(predt: np.ndarray, dtrain: xgb.DMatrix) -> np.ndarray:
+        '''Compute the gradient squared log error.'''
+        ''' plugged  d/d(predt) abs(y-predt)/(np.minimum(predt, y)+1) into wolfram'''
+        y = dtrain.get_label() + 1
+        #return abs(y-predt)/(np.minimum(predt, y)+1))
+        grad = np.zeros(y.shape)
+        for i, val in enumerate(y):
+            if predt[i] > y[i]:
+                grad[i] = 1/(y[i] + 1)
+            else:
+                grad[i] = -(y[i] + 1)/(predt[i]**2 + 1)
+        #y[y < 0] = 10**10
+        #grad = abs((((y-predt)**2)**0.5)/(np.minimum(predt, y) + 1))
+        
+        return grad
+        #return (np.log1p(y) - np.log1p(predt)**2)/ (np.log1p(y) - 1)
+    
+    def hessian_c(predt: np.ndarray, dtrain: xgb.DMatrix) -> np.ndarray:
+        '''Compute the hessian for squared log error.'''
+
+        return np.ones(predt.shape)
+    
+    def custom_obj(predt: np.ndarray,
+                    dtrain: xgb.DMatrix) -> Tuple[np.ndarray, np.ndarray]:
+        '''Squared Log Error objective. A simplified version for RMSLE used as
+        objective function.
+        '''
+        grad = gradient_c(predt, dtrain)
+        hess = hessian_c(predt, dtrain)
+        return grad, hess
+    #####################################
+    
+    def gradient(predt: np.ndarray, dtrain: xgb.DMatrix) -> np.ndarray:
+        '''Compute the gradient squared log error.'''
+        y = dtrain.get_label()
+        return (np.log1p(predt) - np.log1p(y)) / (predt + 1)
+
+    def hessian(predt: np.ndarray, dtrain: xgb.DMatrix) -> np.ndarray:
+        '''Compute the hessian for squared log error.'''
+        y = dtrain.get_label()
+        return np.ones(predt.shape)
+        #return ((-np.log1p(predt) + np.log1p(y) + 1) /
+        #    np.power(predt + 1, 2))
+    
+    
+    def squared_log(predt: np.ndarray,
+                    dtrain: xgb.DMatrix) -> Tuple[np.ndarray, np.ndarray]:
+        '''Squared Log Error objective. A simplified version for RMSLE used as
+        objective function.
+        '''
+        #predt[predt < -1] = -1 + 1e-6
+        grad = gradient(predt, dtrain)
+        hess = hessian(predt, dtrain)
+        return grad, hess
+    
+    ###########################
     
     data_dmatrix = xgb.DMatrix(data=Xm_train,label=ym_train) ### loading into xgboost format
 
     ########### running with k fold cross validation
-    params = {"objective":"reg:squarederror",'colsample_bytree': 0.3,'learning_rate': 0.1,
+    params = {'colsample_bytree': 0.3,'learning_rate': 0.1,
                     'max_depth': 20, 'alpha': 10}
     
-    # cv_results = xgb.cv(dtrain=data_dmatrix, params=params, nfold=3,
-    #                     num_boost_round=100,early_stopping_rounds=10,metrics="rmse", as_pandas=True, seed=123)
+    params = {"objective":"reg:squarederror",'colsample_bytree': 0.3,'learning_rate': 0.1,
+                'max_depth': 20, 'alpha': 10}
     
-    # print('did train test split, defined model')
-    # #cv_results.head()
-    
-    # print(cv_results.tail(1))
-    
-    xg_reg = xgb.train(params=params, dtrain=data_dmatrix, num_boost_round=10)
+    xg_reg = xgb.train(params=params, \
+                       dtrain=data_dmatrix, \
+                       num_boost_round=10, \
+                       obj = custom_obj)
     print('trained')
     
     return xg_reg
@@ -286,8 +342,6 @@ def analyze_xgboost_model(xg_reg, Xm_test, cited_test, keys_test):
     preds = xg_reg.predict(data_dmatrix_Xm_test)
 
     dfRes,missingIds = putResInDf(preds,cited_test,keys_test) #########putting the residuals back into the df for later analysis
-
-    
 
 def setUp4Keras(Xm_train, Xm_test, ym_train, ym_test):
     """ setting up inputs to used with keras
@@ -519,18 +573,22 @@ if __name__ == '__main__':
     Xm_train, Xm_test, ym_train, ym_test, keys_train, keys_test \
     = manTTS(dicMainKeys, X, y)
     
-    xg_reg = runXGboost(X, y)
+    xg_reg = runXGboost(X, y) # should really split model construction and training into seperate functions
 
     # getting accuracy from test set
     data_dmatrix = xgb.DMatrix(data=Xm_test)
     preds = xg_reg.predict(data_dmatrix)
 
+    plt.hist(preds)
     # making a dictionary of the residuals. This is loaded by the residual analysis sccript, and the
     # placed into the data frame used for one hot encoding
     resDict, misMatchList = packagePreds(preds,keys_test,ym_test,dicMain)
 
+    
+
+
     # saving resDict
-    save_pickles([resDict], ["resDict.pckl"], "model_related_outputs")
+    save_pickles([resDict], ["resDict"], "model_related_outputs")
 
 
     # shuffling
