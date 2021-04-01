@@ -7,6 +7,23 @@ converts the input df into one hot encoded outputs
 misc to do:
     strip (the autors have blank space)
 
+to do today:
+    change any synomym consolidation things so they save an intermediate hash map
+    which points from the token that will be present in dicMain to the key is
+    present in dicBow
+    
+to do this week:
+    break popBow and setUpBow down into smaller functions so they are more readable.
+    this encoding is the meat of the project, and should be easily readable, since 
+    hopefully someonw will actually look at it
+
+    custom lookup
+        generally looks good, does miss some things though
+            mass -> mask
+
+    also need to put the step which makes everything all lowercase
+    into one funtion, it looks like some caps locks are sneaking through
+
 @author: Ben Foley
 """
 
@@ -18,40 +35,16 @@ import scipy.sparse
 from scipy.sparse import coo_matrix, lil_matrix
 from generic_func_lib import *
 
-def getYear(dfAll):
-    import numpy as np
-
-    def custom1(y):
-    
-        years = np.linspace(1990,2020,31).astype(int).tolist()
-        for i,year in enumerate(years):
-            years[i] = str(year)
-            if years[i] in y:
-                #print(years[i])
-                return years[i]
-    
-    
-    dfAll['year'] = ''
-    dfAll['year'] = dfAll['jref'].apply(lambda y: custom1(y))
-    
-    dfAll = dfAll[dfAll['year'] != None]
-    dfAll = dfAll.dropna(axis = 0, subset =['year'])
-    dfAll['year'] = dfAll['year'].astype(str)
-    
-    return dfAll
-
-def getTok2(dfIn):
-    
+def getTok2(dfIn, col, col_2_write):
+    """ Using spacy to get the tokens from the title
+    """
     tokens = []
     #start = time.time()
     #disable = ["tagger", "parser","ner","textcat"]
-    for doc in nlp.pipe(df['titleID'].astype('unicode').values):#,disable = disable):
+    for doc in nlp.pipe(df[col].astype('unicode').values):#,disable = disable):
         #doc.text = doc.text.lower()
         #tokens.append([token.text.lower() for token in doc if not token.is_stop])
-        
         tempList = ([token.lemma_ for token in doc])
-    
-    
         for i,string in enumerate(tempList):
             try:
                 tempList[i] = string.lower()
@@ -59,9 +52,7 @@ def getTok2(dfIn):
                 print(string)
     
         tokens.append(tempList)
-    
-    dfIn['tokens'] = tokens
-    
+    dfIn[col_2_write] = tokens
     return dfIn
 
 def updateBowDict(tokens,dicBow):
@@ -83,10 +74,10 @@ def setUpBow2(dfIn, extraWords):  #### adding the extra words to the list after 
     dicBow = {} ##### the dictionary storing the words for the BOW
     dicMain = {} #### dictionary with the row (or paper) id as the key, times cited, tokens, and number of tokens to be actually used in the model as values
     print('starting on getting toks')
-    dfIn = getTok2(dfIn)  ##### getting tokens (or lemma) and adding the list as a new col in the df. # this is fairly slow
+    dfIn = getTok2(dfIn, 'titleID', 'tokens')  ##### getting tokens (or lemma) and adding the list as a new col in the df. # this is fairly slow
     print('got tokens')
 
-    def custom2(x):
+    def get_toks_from_non_title_cols(x):
         #### adds to the list of toks in the tokens column
         ### extra info not in the title is added so it can be used in the bag of words
         tempList= []
@@ -94,21 +85,27 @@ def setUpBow2(dfIn, extraWords):  #### adding the extra words to the list after 
             if col == 'Authors':
                 tempList = tempList + x[col].split(',')
             else:
+                if type([x[col]]) == str:
+                    x[col] = x[col].lower()
                 tempList = tempList +  [x[col]]
                 
         return x['tokens'] +  tempList
 
-    dfIn['tokens'] = dfIn.apply(custom2, axis=1)
-
-    for i,row in dfIn.iterrows(): ###### looping through the dataframe (now with tokens/lemma) and building the dictionaries
-        if i%2000 == 0:
-            print(i)
+    def iter_df_make_bow_and_main(dfIn, dicBow, dicMain):
+        for i,row in dfIn.iterrows(): ###### looping through the dataframe (now with tokens/lemma) and building the dictionaries
+            if i%2000 == 0:
+                print(i)
+            
+            dicBow = updateBowDict(row['tokens'],dicBow)  #### update the bag of words dictionary 
+            ##### add the extraWords in here
         
-        dicBow = updateBowDict(row['tokens'],dicBow)  #### update the bag of words dictionary 
-        ##### add the extraWords in here
-    
-        ### updating the dict with row id, tokens, and cited by info
-        dicMain[str(i)] = [row['cites_per_year'],row['tokens'],0]#### the zero will be updated with the word count for that ids later
+            ### updating the dict with row id, tokens, and cited by info
+            dicMain[str(i)] = [row['cites_per_year'],row['tokens'],0]#### the zero will be updated with the word count for that ids later
+
+        return dicBow, dicMain
+
+    dfIn['tokens'] = dfIn.apply(get_toks_from_non_title_cols, axis=1)
+    dicBow, dicMain = iter_df_make_bow_and_main(dfIn, dicBow, dicMain)
 
     return dicBow, dicMain                                 
 
@@ -119,13 +116,31 @@ def removeFromDict(removeSet,dicIn): #### removes things add hoc from the dictio
 
     return dicIn
 
-def customProcTok(bowDic,symbol2Rem):
-    #### custom text parsing to remove some of the trash that made it through spacy tokenization
-    ### loop through the dicBow
-    ### if key has len 1 remove it
-    ### if it has any of the characters in symbol2rem
-    ### if it can be converted into a float
-    ### more than 2 characters of the string can be converted into a float
+def customProcTok(bowDic: dict,symbol2Rem: set) -> dict:
+    """ removes tokens which have lots of number or nonsense characters (those in symbol2Rem)
+    
+        custom text parsing to remove some of the trash that made it through spacy tokenization
+        loop through the dicBow
+        if key has len 1 remove it
+        if it has any of the characters in symbol2rem
+        if it can be converted into a float
+        more than 2 characters of the string can be converted into a float
+
+    Parameters
+    ----------
+    bowDic : Dict
+        The dict which keeps track of the words (or tokens) which are going into the 
+        one hot encoded matrix
+    symbol2Rem : Set
+        Set of symbols, if a token contains these symbols, we remove it.
+
+    Returns
+    -------
+    tempDic : Dict
+        The updated dicBow after removeing tokens.
+
+    """
+
     years = np.linspace(1990,2021,32).astype(int).tolist()
     years = [str(i) for i in years]
     years = set(years)
@@ -139,7 +154,6 @@ def customProcTok(bowDic,symbol2Rem):
         write = True  
         if key in okSet:
             pass
-        
         else: 
             try:
                 for n in key:
@@ -152,104 +166,123 @@ def customProcTok(bowDic,symbol2Rem):
                     if n in symbol2Rem or count > 1:
                         write = False
                         break
-
                 try:
                     float(key)
                     write = False
                     continue
                 except:
                     pass
-        
                 if len(key) < 1:
                     write = False
                     continue    
-                
                 if len(key) < 3 and key not in okSet:
                     write = False
                     continue  
             except:
                 write = False
 
-
-
         if write == True:
             tempDic[key] = bowDic[key]
 
-    return tempDic
+    return tempDic 
     
 def remTok(bowDic,set2Rem): ### i guess theres another ad hoc function to remove things from a dict
+    """ Removes keys in the set2Rem variables from the dictionary. 
     
+    Parameters:
+        dowDic: dicBow
+        set2Rem: Set. contains keys which are to be removed from bowDic if they
+        are found there
+        
+    Returns:
+        bowDic: The dictionary after desired keys have been removed
+    
+    """    
     for thing in set2Rem:
         try:
             bowDic.pop(thing,None)
         except:
             pass
-    
     return bowDic
 
+def popBow(dicBow: dict, dicMain: dict, intermediate_dict: dict): ####### this is the main loop which contructs the one hot encoded matrix for input to
+    """ constructs the one hot endoded input
+    """
 
-def popBow(dicBow: dict, dicMain: dict): ####### this is the main loop which contructs the one hot encoded matrix for input to
-    # various models
-    ## constructing a scipy sparse matrix
+    def make_word_to_vec_and_toks_per_paper():
+        """ making a dictionary which converts tokens to the position in the 
+            vector. Also making a copy of dicBow which keeps track of which papers
+            are using which tokens. 
+        """
+        dicWordPaper = dicBow.copy()  #### the keys are the words, values list of paper ids
+        dicWord2Vec = {} ### keeps track of which word corresponds to which col in bowVec
+        for i,key in enumerate(dicBow): 
+            dicWord2Vec[key] = i #putting the location of each word into the dict
+            dicWordPaper[key] = [] ### changing the value to emptylists
+        
+        return dicWord2Vec, dicWordPaper
 
-
-    label = [] #### label is the number of citations, what I will try to predict later
-
-    
-    bowVec = lil_matrix((len(dicMain), len(dicBow)), dtype=np.int8) ## this will hold the one hot encoded bow
-    
-    dicWord2Vec = {} ### keeps track of which word corresponds to which col in bowVec
-    wordVec = np.zeros(len(dicBow))  ### is the same length as the num of words in the bow
-    
-    ########adding another dict which keeps track of which papers have which words
-    dicWordPaper = dicBow.copy()  #### the keys are the words, values list of paper ids
-    
-    for i,key in enumerate(dicBow): 
-        dicWord2Vec[key] = i #putting the location of each word into the dict
-        dicWordPaper[key] = [] ### changing the value to emptylists
-    
-    indi = -1
-    for key in dicMain: ################## loop used to populate bowVec, as well update dicMain with the number of factors for each row (paper) that are being used in the model
-        indi = indi +1
+    def loop_tokens(key, dicMain, dicWordPaper, wordVec):
+        """ loops through the tokens contained in each item of dicMain
+        """
+        tempSet = set()
         dicBowTemp = dicBow.copy() ### getting copy of the bow and setting all keys to zero, will use this to count words for the current row
         dicBowTemp = dict.fromkeys(dicBowTemp, 0) #setting all keys to 0 https://stackoverflow.com/questions/13712229/simultaneously-replacing-all-values-of-a-dictionary-to-zero-python
-        
-        wordVecTemp = wordVec.copy()
-        label.append(dicMain[key][0]) ### label is the number of citations, what I will try to predict later
-        tempSet = set()
-        for tok in dicMain[key][1]: ### looping through the tokens stored in dicMain
             
-            try: #### the token may have been removed as a model input, so I need to check if it's still in dicBow
+        for tok in dicMain[key][1]: ### looping through the tokens stored in dicMain
+            #### need to check if the tok is in the intermediate dictionary
+            # if this token got merged with another one (e.g. batteries -> battery)
+            # then we change the tok to its base (lemma, root, whatever), as thats 
+            # what will be in dicBow
+            if tok in intermediate_dict:
+                tok = intermediate_dict[tok]
+        
+            if tok in dicBowTemp:
                 dicBowTemp[tok] = dicBowTemp[tok] + 1 #### #times the word is present
-                
                 dicWordPaper[tok].append(key)  ###### adding the id of the paper which has that word
                 tempSet.add(tok) ###adding the token to a set which will be used to update the sparse array later
                 dicMain[key][2] = dicMain[key][2] + 1 #### keeping track of how many words from this ids are still going to be used
-            except:
-                pass
+
+        return dicMain, dicBowTemp, dicWordPaper, tempSet
+
+    def update_bowVec(tempSet, dicWord2Vec, bowVec, dicBowTemp, indi):
         
         for item in tempSet:  ### looping through the tokens encountered for this row (paper) and updating the one hot encoding 
-
             indj = dicWord2Vec[item] ## getting the index (or column in the sparse matrix)
             try: #### at one point I was having trouble with indexing, so that's why its a try block
                 bowVec[indi,indj] = dicBowTemp[item]
-                
                 if dicBowTemp[item] < 0:
                     print('warning! negative word count in dicBowTemp')
-                    
                 if bowVec[indi,indj] < 0:
                     print('waring! negative word count in bowVec')
-                    
             except:
                 print(str(indi) + ' ' + str(indj))
-        
-        # for j,key in enumerate(dicBowTemp): ############## this is the scaling problem.
-        # # only need to non zero ones
-        #     wordVecTemp[j] = dicBowTemp[key]
-        
-        #bowVec.append(wordVecTemp)
 
-    return label,bowVec,dicWord2Vec,dicWordPaper  #### dicWordPaper is obsolete in this version
+        return bowVec
+
+    def loop_dicMain(dicMain, bowVec, dicWordPaper):
+        """ loops through the main dictionary
+        """
+        
+        indi = -1
+        for key in dicMain: # loop used to populate bowVec, as well update dicMain with the number of factors for each row (paper) that are being used in the model
+            indi = indi +1
+            label.append(dicMain[key][0]) # label is the number of citations, what I will try to predict later
+            dicMain, dicBowTemp, dicWordPaper, tempSet = loop_tokens(key, dicMain, dicWordPaper, wordVec)
+            bowVec = update_bowVec(tempSet, dicWord2Vec, bowVec, dicBowTemp, indi)
+
+        return label, bowVec, dicWord2Vec, dicWordPaper
+
+    # main function script, declaring variables 
+    label = [] #### label is the number of citations, what I will try to predict later
+    bowVec = lil_matrix((len(dicMain), len(dicBow)), dtype=np.int8) ## this will hold the one hot encoded bow    
+    wordVec = np.zeros(len(dicBow))  ### is the same length as the num of words in the bow
+    
+    dicWord2Vec, dicWordPaper = make_word_to_vec_and_toks_per_paper()
+    
+    label, bowVec, dicWord2Vec, dicWordPaper = loop_dicMain(dicMain, bowVec, dicWordPaper)
+
+    return label, bowVec, dicWord2Vec, dicWordPaper  #### dicWordPaper is obsolete in this version
 
 def analyzeFreq(dicIn):   
     ## this is also obsolete now
@@ -650,8 +683,6 @@ def customLookUpSpacy(dicBow):
 
     return dicBow
 
-
-
 def buildCustomLookup(dicBow):
 
     def checkSim(word1: str, word2: str) -> list: #returns list of strs
@@ -773,12 +804,144 @@ def buildCustomLookup(dicBow):
         
     return lookUpDict
 
+def buildCustomLookup2(dicBow):
+    # trying to break this down and make it more readable
+    # then need to test more throughly and make sure it works
+    def checkSim(word1: str, word2: str) -> list: #returns list of strs
+        """ if similar return true, else false
+        the exact criteria is tricky
+        if word 2 is longer it returns the differnce at the end as part of the list
+        if word 1 is longer it returns none in that place
+        
+        """
+        # if either word is 3 chars or shorter we're not bothering with them
+        word2Long = False
+        if len(word1) < 4 or len(word2) < 4:
+            return [str(),str(),str()]
+        #need to make the longer work word1
+        if len(word2) >= len(word1):
+            word2Long = True
+            wordLong = word2
+            wordShort = word1
+        else:
+            wordLong = word1
+            wordShort = word2
+        
+        #want to get the common part and the difference. get back three strings
+        base = str()
+        wordLongDif = str()
+        wordShortDif = str()
+        count = 0
+        for i, char in enumerate(wordShort): ### looping over shorter word
+            if wordLong[i] == char:
+                count += 1 # keeping track of number of same chars
+                base +=char # if equal then we keep adding to the base
+            else: # if not add to the differences
+                if count < 3: # if we hit a character thats different and theres only 2 that have been the same it's not the same base word, don't need to keep looking
+                    return [str(), str(), str()]
+                else:
+                    wordLongDif += wordLong[i]
+                    wordShortDif += wordShort[i]
+        
+        if len(wordLong) > len(wordShort): # if word1 is longer than 2, put the rest of 1 into word1dif. this is sorta silly since there shouldn't be any duplicate words
+            wordLongDif += wordLong[i+1:]
+        ################## got the differences, now what?
+        if word2Long == True:
+            return [base,wordLongDif, word2]
+        else:
+            return [base,None, word2]
+        
+    def findLemma(wordRegion: list) -> dict: #
+        #lets start with the most basic implementation, compare every word and
+        #which is a base of another. scales terrible but conceptually simple
+        tempDict = {} #look up table to be built
+        reverseTempDict = {} 
+        #word has [base, ]
+        okEnds = set(['s','ic','ics','ed'])
+        for word1 in wordRegion:
+            for word2 in wordRegion:
+                compareResults = checkSim(word1,word2)
+                # if wordLongDiff in okEnds then word2 points to word1. word1 must be longer
+                # like if word1 is cheese and word2 is cheeses
+                # the trick is dealing with cases like:
+                    # ferromagnetics ferromagnetic ferromagnet
+                    # if a value is the same as a key (easy to check) forward that val
+                if compareResults[1] in okEnds:
+                    if word1 in tempDict: # word 1 is already a key in the dict
+                        # word2 needs to point to the value of word1
+                        tempDict[word2] = tempDict[word1]
+                        reverseTempDict = {v: k for k, v in tempDict.items()}
+                        
+                    if word2 in tempDict:
+                        #word2 is already in tempDict.
+                        # this means that word2 was previously tried as word2, since
+                        # we only reach this stage once with a given word as word2
+                        print("do'h, see the findLemma subFunc")
+                        
+                    if word2 in reverseTempDict: #
+                        # if the word that points is being pointed to by something
+                        # else, need to update the val of that something else 
+                        # ferromagnetic is word 2, ferromagnet is word 1
+                        # need to go back and update ferromagnetics
+                        
+                        tempWordDict[word2] = word1
+                        thingToBeUpdated = reverseTempDict[word1]
+                        tempWordDict[thingToBeUpdated] = word1
+                        reverseTempDict = {v: k for k, v in tempDict.items()}
+                    
+                    tempDict[word2] = word1
+                
+            return tempDict
+                
+    ###### preparing inputs
+    lookUpDict= {}
+    dicBowKeys = [] 
+    for key in dicBow.keys(): 
+        dicBowKeys.append(key) 
+    dicBowKeys.sort() 
+    
+    point1 = 0 # initializing pointers 1 and 2
+    point2 = 1
+    currentWords = [] # this list will store the base and differences for regions of similar words
+    
+    while point2 < len(dicBowKeys):
+        moveCond = True
+        currentWords.append(checkSim(dicBowKeys[point1],dicBowKeys[point2]))
+        if len(currentWords[-1][0]) == 0: # see the if count < X: condition in checkSim. we are checking to see if the latest results form checkSim say that the words are totally different
+            moveCond = False    
+        #else:
+            #print('need to fill this in, do I need to do anything here?')
+        if moveCond == False and len(currentWords) < 2: # if point1 and 2 are at different words AND theres only 1 word in current words, then we have nothing to compare
+            point1 += 1 #words are different, keep steping through
+            point2 += 1
+            currentWords = [] #reset current words
+        elif moveCond == False and len(currentWords) > 2: ### this condition triggers the main part of the function, actually figuring out the base words (lemma)
+            wordRegion = dicBowKeys[point1:point2+1]
+            lookUpDict.update(findLemma(wordRegion))
+            point1 += len(currentWords)
+            point2 = point1 + 1
+            currentWords = []
+        else: ## if movecondition is true
+            point2 += 1
+        
+    return lookUpDict
+
 def condenseDicBow(dicBow,customLookUpDict):
+    """ converts tokens which were decided to have a root into that root.
+        eg. batteries -> battery
+        
+    PARAMS
+        dicBow: dict. The keys all tokens to be used in the one hot encoded model. 
+                        The values are the number of times that token has been used
+        customLookUpDict: dict. Maps tokens to their root, such as a key of "batteries"
+                            with a value of "battery".
+    """
+    
     for key in customLookUpDict:
         if key in dicBow:
             try:
-                dicBow[customLookUpDict[key]] += dicBow[key]
-                dicBow.pop(key)
+                dicBow[customLookUpDict[key]] += dicBow[key] # since we are combing the tokens, also need to combine the number of times it's present
+                dicBow.pop(key) # remove the key. (eg batteries is merged with battery, then the batteries key removed)
             except:
                 print('couldnt find ' + key)
 
@@ -837,7 +1000,6 @@ def compositionOfDicBow(dicBow,authorSet,journalSet):
     
     return outDict
 
-
 def predictOne(MLinput):
     """ return 
     """
@@ -875,28 +1037,216 @@ def words2ModelInput(inputDict, dicWord2Vec):
             factUsed.append(word)
     return X, factUsed
 
+def clean_authors(df):
+    """ currently: this is more work than I realized, not sure if it's work doing
+        until have more results from the intial fits
+    
+        It's common that authors are listed with both full name and initials. would like
+        to combine these.
+        
+        strategy: if we take the data scrapped from one author, it's not likely that
+                there will be cases where authors have the same or same initials. So if 
+                map initials back to the author they likely came from only with the set
+                of papers for each author scrapped, should be able to expand the author
+                abbreviatinos into full name if present
+                
+        implementation:
+            define allowed transformations
+                initial can be expanded into full name if
+                    * + lastName = firstName + lastName
+                    * + ^ + lastName = firstName + middleName + lastName
+                    
+                * = any from list of all first names 
+                ^ = from list of all middle names
+
+            single letter = initial, try and sub *
+            single letter + "." = initial, try and sub *
+            double letter = initials, try and sub * + ' ' + ^
+            
+            split df into groups of authors scrapped
+            for each of those, get lists of authors
+            
+            go through each author, if the authors name has initials,
+            make an entry with the generic character 
+        
+            if there are multiple things it could be, we want to add that group
+            (name with initials and full names that it could be) to a list of authors
+            which we can't resolve. 
+        
+    """
+    
+
+
+    def custom_name_clean(x):
+        # break authors in list, make lower, strip, recombine into str seperated
+        # by commas
+        x_list = x.split(",")
+        y = str()
+        for name in x_list:
+            name = name.lower().strip()
+            y += name + ","
+        
+        return y
+    
+    def custom_replace_name(x):
+        # this was meat to be the .apply or lambda for replacing the authors
+        # in the actual df, haven't done it yet
+        return x
+    
+    def map_initials_to_names(df_temp):
+        # for now we are just dealing with the case where theres a first,
+        # maybe middle, and last name.
+        def update_dict(dictIn, key, value):
+            if key in dictIn:
+                dictIn[key].add(str(value))
+            else:
+                dictIn[key] = set()
+                dictIn[key].add(str(value))
+            return dictIn
+        
+        def make_name_sets():
+            """ loops through the authors of each paper makes lists of first,
+                middle, last names as well as any that seem to be abbrievations
+                
+                A dictionary with names with abbreiations where the abbreiations
+                are converted to wildwards is returned, along with dictionaries 
+                with the wildcard-ized version of each first and middle name
+                
+                based somewhat on the word ladder type problems
+            """
+            
+            first_names = {}
+            middle_names = {}
+            last_names = {}
+            all_names = {}
+            name_to_generic = {}
+            names_to_title = {}
+            for _, row in df_temp.iterrows():
+                for name in row['Authors'].split(","):
+                    num_words = len(name.split(" "))
+                    words = name.split(" ")
+                    temp_name_to_generic = {}
+                    if len(words) == 2 or len(words) == 3: 
+                        all_names.update({name: 1})
+                        for i, word in enumerate(words):
+                            # this isn't a very good way to do this
+                            # could do:
+                            # for each thing try transform. return transformed thing
+                                # or thing if no transform
+                            # add all things back into name, if no transforms done
+                            # don't put it in the generic_to_name dict.
+                            # the if structure is really hard to follow
+                            
+                            
+                            if i == 0:
+                                if len(word) > 2: # its a word not an abbrievation.
+                                    update_dict(first_names, (word[0] + "*"), word)
+                                elif len(word) == 1:
+                                    temp_name_to_generic[name] = word + "*" + " "
+                                elif len(word) == 2 and word[1] == ".":
+                                    temp_name_to_generic[name] = word[0] + "*" + " "
+
+                            elif i == 1 and num_words == 3:
+                                if len(word) > 2: # its a word not an abbrievation.
+                                    update_dict(middle_names, word[0] + "*", word)
+                                elif len(word) == 1:
+                                    temp_name_to_generic[name] += word + "*" + " "
+                                elif len(word) == 2 and word[1] == ".":
+                                    temp_name_to_generic[name] += word[0] + "*" + " "
+                                
+                            elif (i == 2 and num_words == 3) or (i == 1 and num_words == 2):
+                                if len(word) > 2:
+                                    last_names.update({word: 1})
+                                    if bool(temp_name_to_generic) == True:
+                                        temp_name_to_generic[name] += word
+                                    
+                    name_to_generic.update(temp_name_to_generic)
+                    if bool(temp_name_to_generic) == True: # if this name had abbrievations, add it so we how to look at that paper to try and resolve the abbreivation
+                        names_to_title.update({name: row['titleID']})
+            generic_to_name = {v: k for k, v in name_to_generic.items()}
+            
+            return all_names, first_names, middle_names, last_names, name_to_generic, \
+                generic_to_name, names_to_title
+
+        def get_possible_names(abrv_name):
+            """ gets all possible names based on the options for the * characters
+            """
+            pos_first_names = None 
+            pos_middle_names = None 
+            pos_names = []
+            if abrv_name.split(" ")[0] in first_names:
+                pos_first_names = first_names[abrv_name.split(" ")[0]]
+            if len(abrv_name.split(" ")) == 3 and abrv_name.split(" ")[1] \
+                in middle_names:
+                pos_middle_names = middle_names[abrv_name.split(" ")[1]]
+    
+            # now loop through all the possible combinations. can't break when find, cause
+            # need to see if there's more than 1
+            if pos_first_names:
+                for f_name in pos_first_names:
+                    if pos_middle_names:
+                        for m_name in pos_middle_names:
+                            pos_names.append(f_name + " " + m_name + " " + \
+                                             abrv_name.split(" ")[2])
+                    else:
+                        pos_names.append(f_name + " " + abrv_name.split(" ")[1])
+                    
+            return pos_names
+
+        all_names, first_names, middle_names, last_names, name_to_generic, generic_to_name, \
+            names_to_title = make_name_sets()
+    
+        # loop through the generic_to_names (or names_to_generic) and see if the abbreviations match any of the other full names
+        abrv_names_to_full = {} 
+        for abrv_name in generic_to_name:
+            pos_names = get_possible_names(abrv_name)
+            for pos_name in pos_names:
+                if pos_name in all_names:
+                    abrv_names_to_full = update_dict(abrv_names_to_full, abrv_name, pos_name)
+    
+    
+        return abrv_names_to_full
+    
+    df['Authors'] = df['Authors'].apply(custom_name_clean)
+    scrape_authors = df['scrap_auth_id'].unique()
+    
+    for author in scrape_authors:
+        df_temp = df[df['scrap_auth_id'] == author]
+        abrv_names_to_full = map_initials_to_names(df_temp)
+        
+        
+        #updated_authors = map_initials_to_names(df_temp)
+    
+    return df
 
 if __name__ == "__main__":
     ############ load the data, keeping the ids col as a str
-    df_list = load_all_dfs("cleaned_data")
-    df = cat_dfs(df_list)
+    # df_list = load_all_dfs("cleaned_data")
     
+    # # for testing we want this to run fast
+    # df_list = df_list[0:1]
+    
+    # df = cat_dfs(df_list)
+    df = pd.read_csv("cleaned_data//df_for_results__28-03-2021 10_02_35.csv")
+    df = df.iloc[0:10000]
+    
+    ### droping some cols we aren't using in the hopes that this runs faster
+    cols_to_drop = ['Unnamed: 0', 'title_main', 'Conference', 'Source', 'book', \
+                    'publisher', 'vol', 'issue', 'pages', 'urlID', 'citedYear']
+    
+    df = df.drop(labels = cols_to_drop, axis = 1)
+    clean_authors(df)
     ### loading spacy library and stopwords
     nlp = spacy.load('en_core_web_sm')
-
     spacy_stopwords = spacy.lang.en.stop_words.STOP_WORDS
-    
-    #toRemove = ['-']
     customize_stop_words = ['-','Single']  ##### adding custom stopwords
     for w in customize_stop_words:
         nlp.vocab[w].is_stop = True
 
     extraWords = ['year','Authors','Journal','publisher'] ####### cols from the df to be added to the bow
-    
-    toks2Rem = ['\n  ','--',"",',',"\to","..."]
-    
+    toks2Rem = ['\n  ','--',"",',',"\to","..."] # if we seem these tokens get rid of them
     symbol2Rem = set(['%','$','{','}',"^","/", "\\",'#','*',"'",\
-                  "''", '_','(',')', '..',"+",'-',']','['])
+                  "''", '_','(',')', '..',"+",'-',']','[']) # remove 
     
     start = time.time()
     dicBow,dicMain = setUpBow2(df,extraWords) ### get initial data
@@ -906,35 +1256,15 @@ if __name__ == "__main__":
     ####################
     dicBow = customProcTok(dicBow,symbol2Rem) #### this isn't working right
     print('did customProcTok')
-    
-    
-    ### building a custom dictionary to key track of lemma
-    """ need to come back to this later when we have more stuff
-    """
-    
-    # custLemmaLookUP = buildCustomLookup(dicBow)
-    # dicBow = condenseDicBow(dicBow,custLemmaLookUP)
-    ####remove words with low counts here
-    thresh = 5
-    dicBow = trimBow2(dicBow, thresh)
-    
-    # threshAuthor = 9
-    # threshJournal = 9
-    # authorSet = set(df['submit'].to_list())
-    # journalSet = set(df['jName'].to_list())
-    
-    # this is the option for if we want different thresholds for different categories
-    #dicBow = trimBow3(dicBow,authorSet,journalSet,thresh,threshAuthor,threshJournal)
-    
-    
-    
+
     print('trimmed bow')
     ###############
     toks2Rem = ['\n  ','--',"",',',"\to","...","the", "what", "that", "then", \
                 "and", "for", "couldnt find", "from", 'with', "non", "in", "of"]
     dicBow = remTok(dicBow,toks2Rem)
     ############### work on this later once we have more words
-    dicBow = customLookUpSpacy(dicBow)
+    #dicBow = customLookUpSpacy(dicBow)
+    word_to_root = buildCustomLookup(dicBow)
     
     start = time.time()
     print('starting popBow')
@@ -942,7 +1272,10 @@ if __name__ == "__main__":
     """
     #labelY,bowVecY,dicWord2Vec,dicWordPaper = popBow(dicBow,futureDict)
     
-    labelX,bowVecX,dicWord2Vec,dicWordPaper = popBow(dicBow,dicMain)
+    thresh = 0
+    dicBow = trimBow2(dicBow, thresh)
+    
+    labelX,bowVecX,dicWord2Vec,dicWordPaper = popBow(dicBow,dicMain, word_to_root)
     
     print('finished pop Bow')
     end = time.time()
