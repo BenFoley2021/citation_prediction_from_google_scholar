@@ -2,11 +2,7 @@
 """
 Created on Tue Mar  9 14:13:49 2021
 
-3-25: processing takes too long. need to record which files already did, save 
-        the processed df as csv. aggratage results every few days so never have to 
-        process 10^6 at once
-
-in progress 6pm 3-26 the defualt behavoir is to save the files read after each run. when the script is
+the defualt behavoir is to save the files read after each run. when the script is
 run again, the files read is loaded. files in files_read are skipped when loading
 the paperDicts.
 

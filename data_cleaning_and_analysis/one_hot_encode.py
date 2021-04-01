@@ -1039,7 +1039,8 @@ def words2ModelInput(inputDict, dicWord2Vec):
 
 def clean_authors(df):
     """ currently: this is more work than I realized, not sure if it's work doing
-        until have more results from the intial fits
+        until have more results from the intial fits. should try other less, less adhoc 
+        methods of dimensionality reduction before investing more time here (note on 4/1)
     
         It's common that authors are listed with both full name and initials. would like
         to combine these.
@@ -1272,7 +1273,7 @@ if __name__ == "__main__":
     """
     #labelY,bowVecY,dicWord2Vec,dicWordPaper = popBow(dicBow,futureDict)
     
-    thresh = 0
+    thresh = 10
     dicBow = trimBow2(dicBow, thresh)
     
     labelX,bowVecX,dicWord2Vec,dicWordPaper = popBow(dicBow,dicMain, word_to_root)
