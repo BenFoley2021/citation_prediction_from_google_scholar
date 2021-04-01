@@ -490,7 +490,6 @@ def clean_df(df, cols_to_return):
     
     df['cites_per_year'] = df['cited_num']/ df['date'].apply(lambda x: custom_get_year_difference(x))
     
-    
     ### final formatting
     df['year'] = df['year'].astype(str)
 
@@ -503,7 +502,6 @@ def clean_df(df, cols_to_return):
     #df = df[df['cites_per_year'] >= 0]
 
     return df
-
 
 if __name__ == "__main__":
     ### loading all the papers we've gotten so far from crawling the papers by citation
@@ -530,7 +528,6 @@ if __name__ == "__main__":
     #papersDict, files_read = load_dicts_from_dir("paperDictA", dirs_to_read, keysToGet)
     
     papers, files_read = load_dicts_from_dir_to_list("paperDictA", dirs_to_read, colNames, files_read)
-    
     df = paperlist_to_df(papers)
     
     # only keeping these cols

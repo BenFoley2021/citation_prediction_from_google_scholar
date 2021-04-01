@@ -3,6 +3,8 @@
 Created on Sun Mar  7 17:36:34 2021
 V_2_8_1  the execption in the main loop triggers a ~5 min wait before trying to reinitialze the crawler object and start again
 
+V_2_8_2 need to make a thing so that if the interenet dies in the middle of scrapping an author it doesn't make the author as scrapped
+
 
 added another loop in if __main__ which restarts the mainPaperCrawlLoop if something goes wrong. the webdriver is now an attribute 
 of pathHeadA, so it gets reinitialied when this happens. number of times that the mainpapercrawl is restarted limited. added error log attribute
@@ -54,9 +56,11 @@ class pathHeadA():
         self.authorStack = None
         self.authorsDone = []
         self.curAuthorID = None
-        self.paperEr = None ### for errors while scraping a paper
-        self.pageEr = None ### for errors on a page
-        self.error_log = error_log ### error thrown by api. mostly this just tells use if we've run out of api calls
+        self.papers_got = 0
+        self.papers_attempted = 0
+        self.paper_error = {"in_a_row": 0, "total": 0} # the number of times all attempts to get info from the papers failded (try / execempts)
+        self.author_error = False # if True, there were too many errors scraping the author we can't flag them as done in the db
+        self.error_log = error_log 
         self.main_loop_error = main_loop_error ### other errors to keep track of which will be dealt with in the mainLoop
         self.alreadySeen = 0 # counter for how many papers we've already seen
         self.yeild = 0 # number of papers sucessfully gotten from a page
@@ -105,8 +109,8 @@ class pathHeadA():
         """
         def check_if_done_w_author():
             
-            thresh3 = ['non_en', 'no_pubDate',"no_title", "not_real_paper"]
-            thresh5 = ['confrence_no_cites',"old_no_cites", "missing_fields"]
+            thresh3 = ['non_en', 'no_pubDate', "no_title", "not_real_paper"]
+            thresh5 = ['confrence_no_cites', "old_no_cites", "missing_fields", "book"]
             for key in thresh3:
                 if self.done_with_author['params'][key] > 4:
                     self.done_with_author['to_stop'] = True
@@ -130,20 +134,26 @@ class pathHeadA():
 
             confrence_words = ['confrence', 'confrence', 'abstract', 'Abstract', 'abstracts', 'Abstracts', "bulletin"]
             keys_list = list(tempDict.keys())
-            if "Confrence" in keys_list and (tempDict['cited'] == "NA" or tempDict['cited'] == "couldnt find"):
-                self.done_with_author["params"]["confrence_no_cites"] += 1
-                print('confrence')
-            # this is terrible coding, go back and fix it
-            elif 'Journal' in keys_list:
-                if any(thing in tempDict['Journal'] for thing in confrence_words):
+            
+            if tempDict['cited'] == 'NA': # This means it doesn't have any cites
+            
+                if "Confrence" in keys_list and (tempDict['cited'] == "NA" or tempDict['cited'] == "couldnt find"):
                     self.done_with_author["params"]["confrence_no_cites"] += 1
                     print('confrence')
+                # this is terrible coding, go back and fix it
+                elif 'Journal' in keys_list:
+                    if any(thing in tempDict['Journal'] for thing in confrence_words):
+                        self.done_with_author["params"]["confrence_no_cites"] += 1
+                        print('confrence')
+                        
+                elif 'Source' in keys_list:
+                    if any(thing in tempDict['Source'] for thing in confrence_words):
+                        self.done_with_author["params"]["confrence_no_cites"] += 1
+                        print('confrence')
+                else:
+                    self.done_with_author["params"]["confrence_no_cites"] = 0 # 
                     
-            elif 'Source' in keys_list:
-                if any(thing in tempDict['Source'] for thing in confrence_words):
-                    self.done_with_author["params"]["confrence_no_cites"] += 1
-                    print('confrence')
-            else:
+            else: 
                 self.done_with_author["params"]["confrence_no_cites"] = 0
                 
             return None
@@ -163,7 +173,6 @@ class pathHeadA():
             else: # if we didn't find any evidence that it's a book reset the count
                 self.done_with_author["params"]["book"] = 0 
                 
-                
         def is_old_no_cites():
             try:
                 if int(tempDict['pubDate'].split("/")[0]) < 1990 and (tempDict['cited'] \
@@ -173,7 +182,6 @@ class pathHeadA():
                     self.done_with_author["params"]["old_no_cites"] = 0
             except:
                 self.done_with_author["params"]["old_no_cites"] = 1
-                
                 
         def is_en():
                 # this function also records if there isn't a title
@@ -210,7 +218,6 @@ class pathHeadA():
                 self.done_with_author["params"]["missing_fields"] += 1
             else:
                 self.done_with_author["params"]["missing_fields"] = 0 
-                
                 
         def is_real_paper():
             # people seem to put crap like their thesis, posters, papers that are still under review
@@ -444,17 +451,143 @@ class pathHeadA():
                 
             return 'couldnt find', name
         ########## end funct
+        def reset_author_attrs():
+            # reseting the data used to determine if we are getting useful papers
+            self.done_with_author = {"params": {"non_en": 0, "no_pubDate": 0, "missing_fields": 0, "confrence_no_cites": 0, \
+                             "old_no_cites": 0, "no_title": 0, "not_real_paper": 0, "book": 0}, "to_stop": False} # this will probably be a dict. need keep track of things which will be used to
+                                # determine if we are currently mining useless data
+            self.paper_error['in_a_row'] = 0 
+            self.paper_error['total'] = 0 
+            self.papers_got = 0
+            self.papers_attempted = 0
+            self.author_error = False
+            
+        def get_data():
+            # actually gets data
+                            # for the rest of the things, we want to limit our search the parent node which contains 
+                # the data, instead of the whole page
+            self.papers_got += 1 # as long as we can get title that means we at least loaded the page
+            
+            
+            html = self.driver.page_source
+            soup = BeautifulSoup(html)
+            # names = ["Pages"]
+            # text_out, where_pub = get_where_pub(soup, names)
+            try:
+                tempDict['Authors'] = get_data_field(soup, ['Authors'])[0]
+            except:
+                print('author exception')
+    
+            # need two steps to get these so the intermeidates are up in the function
+            try:
+                tempDict['pubDate'] = get_data_field(soup, ['Publication date'])[0]
+            except:
+                tempDict['pubDate'] = 'NA'
+                print('pub date exepction')
+            
+            try:
+                tempDict['all'] = self.driver.find_elements_by_id("gsc_ocd_bdy")[0].text
+            except:
+                tempDict['all'] = 'NA'
+                print('all exception')
+                
+            names = ["Journal", "Source", "Conference", "Book"]
+            try:
+                text_data, name = get_data_field(soup, names) 
+                tempDict[name] = text_data
+            except:
+                tempDict['journal'] = 'NA'
+                print('journal exception')
+                
+            try:
+                tempDict['vol'] = get_data_field(soup, ['Volume'])[0]
+            except:
+                tempDict['vol'] = 'NA'
+                #print('volume exception')
+                
+            try:
+                tempDict['issue'] = get_data_field(soup, ['Issue'])[0]
+            except:
+                tempDict['issue'] = 'NA'
+                #print('issue exception')
+                
+            try:
+                tempDict['pages'] = get_data_field(soup, ['Pages'])[0]
+            except:
+                tempDict['pages'] = 'NA'
+                #print('pages exception')
+            
+            try:
+                tempDict['publisher'] = get_data_field(soup, ['Publisher'])[0]
+            except:
+                tempDict['publisher'] = 'NA'
+                print('publisher exception')
+                
+            try:
+                tempDict['description'] = get_data_field(soup, ['Description'])[0]
+            except:
+                tempDict['description'] = 'NA'
+                print('description excemption')
+    
+            try:
+                cited = self.driver.find_elements_by_xpath("//div[@style='margin-bottom:1em']")    
+                tempDict['cited'] = cited[0].text
+            except:
+                tempDict['cited'] = 'NA'
+                print('cited execption')
+                print(tempDict['titleID'])
+                                    
+            try:
+            # getting the graph of citation versus years
+                years = self.driver.find_element_by_id("gsc_vcd_graph_bars").text
+                citesYear = self.driver.find_elements_by_class_name("gsc_vcd_g_a")
+                tempList = []
+                for thing in citesYear:
+                    tempList.append(thing.find_element_by_css_selector("*").get_attribute('innerHTML'))
+                tempDict['citedYear'] = {'year': years, 'cited': tempList}
+            except:
+                tempDict['citedYear'] = 'NA'
+                print('couldnt get cited by year table')
         
-        # reseting the data used to determine if we are getting useful papers
-        self.done_with_author = {"params": {"non_en": 0, "no_pubDate": 0, "missing_fields": 0, "confrence_no_cites": 0, \
-                         "old_no_cites": 0, "no_title": 0, "not_real_paper": 0, "book": 0}, "to_stop": False} # this will probably be a dict. need keep track of things which will be used to
-                            # determine if we are currently mining useless data
-        
-        #paperInfoDict = {}
+            ######## getting the cited url element
+            try:
+                idEleParent = self.driver.find_elements_by_class_name("gsc_vcd_merged_snippet")
+                idHref = idEleParent[0].find_element_by_class_name("gsc_oms_link").get_attribute('outerHTML')
+                tempDict['urlID'] = getCitedUrlID(idHref)
+            except: 
+                tempDict['urlID'] = "NA"
+                
+            # update the things regardless of how much data we actually got
+            tempDict['scrap_auth_id'] = self.curAuthorID
+            self.paperDict.update({tempDict['titleID']: tempDict})
+            self.papersThisAuthor.append(tempDict['titleID'])
+
+            ### will probably need to nest this in a try statement and have another error type for if it fails
+            self.are_getting_useful(tempDict) ### checking usefullness of this paper
+            
+            return tempDict
+            
+        def decide_author_error():
+            if self.paper_error['in_a_row'] > 3:
+                self.author_error = True
+                print('author error')
+
+            elif self.papers_attempted > 5 and self.papers_got / self.papers_attempted < 0.8:
+                self.author_error = True
+                print('author error')
+            return None
+            
+        reset_author_attrs()     
+
         for i, paper in enumerate(papers):
             
             # need to get the title to check if we've seen it before
             # should be in paper gsc_a_at .text
+            decide_author_error()
+            if self.author_error == True:
+                print('papers dont seem to be loading')
+                return None
+            
             titleID = paper.text 
             
             if self.check_db_papers(titleID) == False: # this operates on the paper element, which we already have
@@ -464,125 +597,30 @@ class pathHeadA():
                 #print('clicked')
                 tempDict = {}
                 tempDict['titleID'] = titleID
+                self.papers_attempted += 1
                 try:
                     self.driver.find_element_by_id("gsc_vcd_title").text
                 except:
                     print('first time trying to get gsc_vcd_title failed') ### somtimes the page takes awhile to load. if we can't find this node it means we need to wait longer
                     time.sleep(5)
-                
-                try:
+                    
+                try: # main actions of function occur here
                     tempDict['title_main'] = self.driver.find_element_by_id("gsc_vcd_title").text
+                    self.paper_error['in_a_row'] = 0 
+                    self.papers_got += 1
+                    tempDict = get_data()
+                    if self.done_with_author['to_stop'] == True: # if are_getting_useful method decided that we were
+                                    # just scrapping junk, stop by returning None.
+                                    # this will move to the next paper
+                        print('scrapping junk moving to next author')
+                        return None 
+                    
                 except: 
                     tempDict['title_main'] = 'NA'
                     print('title_main exception')
+                    self.paper_error['in_a_row'] += 1 
+                    self.paper_error['total'] += 1
                     
-                # for the rest of the things, we want to limit our search the parent node which contains 
-                # the data, instead of the whole page
-                html = self.driver.page_source
-                soup = BeautifulSoup(html)
-                # names = ["Pages"]
-                # text_out, where_pub = get_where_pub(soup, names)
-                try:
-                    tempDict['Authors'] = get_data_field(soup, ['Authors'])[0]
-                except:
-                    print('author exception')
-        
-                # need two steps to get these so the intermeidates are up in the function
-                try:
-                    tempDict['pubDate'] = get_data_field(soup, ['Publication date'])[0]
-                except:
-                    tempDict['pubDate'] = 'NA'
-                    print('pub date exepction')
-                
-                try:
-                    tempDict['all'] = self.driver.find_elements_by_id("gsc_ocd_bdy")[0].text
-                except:
-                    tempDict['all'] = 'NA'
-                    print('all exception')
-                    
-                    
-                names = ["Journal", "Source", "Conference", "Book"]
-                try:
-                    text_data, name = get_data_field(soup, names) 
-                    tempDict[name] = text_data
-                except:
-                    tempDict['journal'] = 'NA'
-                    print('journal exception')
-                    
-                    
-                    
-                try:
-                    tempDict['vol'] = get_data_field(soup, ['Volume'])[0]
-                except:
-                    tempDict['vol'] = 'NA'
-                    #print('volume exception')
-                    
-                try:
-                    tempDict['issue'] = get_data_field(soup, ['Issue'])[0]
-                except:
-                    tempDict['issue'] = 'NA'
-                    #print('issue exception')
-                    
-                try:
-                    tempDict['pages'] = get_data_field(soup, ['Pages'])[0]
-                except:
-                    tempDict['pages'] = 'NA'
-                    #print('pages exception')
-                
-                try:
-                    tempDict['publisher'] = get_data_field(soup, ['Publisher'])[0]
-                except:
-                    tempDict['publisher'] = 'NA'
-                    print('publisher exception')
-                    
-                try:
-                    tempDict['description'] = get_data_field(soup, ['Description'])[0]
-                except:
-                    tempDict['description'] = 'NA'
-                    print('description excemption')
-        
-                try:
-                    cited = self.driver.find_elements_by_xpath("//div[@style='margin-bottom:1em']")    
-                    tempDict['cited'] = cited[0].text
-                except:
-                    tempDict['cited'] = 'NA'
-                    print('cited execption')
-                    print(tempDict['titleID'])
-                                        
-                    
-                try:
-                # getting the graph of citation versus years
-                    years = self.driver.find_element_by_id("gsc_vcd_graph_bars").text
-                    citesYear = self.driver.find_elements_by_class_name("gsc_vcd_g_a")
-                    tempList = []
-                    for thing in citesYear:
-                        tempList.append(thing.find_element_by_css_selector("*").get_attribute('innerHTML'))
-                    tempDict['citedYear'] = {'year': years, 'cited': tempList}
-                except:
-                    tempDict['citedYear'] = 'NA'
-                    print('couldnt get cited by year table')
-            
-                ######## getting the cited url element
-                try:
-                    idEleParent = self.driver.find_elements_by_class_name("gsc_vcd_merged_snippet")
-                    idHref = idEleParent[0].find_element_by_class_name("gsc_oms_link").get_attribute('outerHTML')
-                    tempDict['urlID'] = getCitedUrlID(idHref)
-                except: 
-                    tempDict['urlID'] = "NA"
-                    
-                # update the things regardless of how much data we actually got
-                tempDict['scrap_auth_id'] = self.curAuthorID
-                self.paperDict.update({tempDict['titleID']: tempDict})
-                self.papersThisAuthor.append(tempDict['titleID'])
-    
-                ### will probably need to nest this in a try statement and have another error type for if it fails
-                self.are_getting_useful(tempDict) ### checking usefullness of this paper
-                if self.done_with_author['to_stop'] == True: # if are_getting_useful method decided that we were
-                                                    # just scrapping junk, stop by returning None.
-                                                    # this will move to the next paper
-                    print('scrapping junk moving to next author')
-                    return None 
-
                 ######## clicking the x button so the next paper will be visible, need to do this no matter what
                 xButton = self.driver.find_element_by_id("gs_md_cita-d-x")
                 xButton.click()
@@ -655,9 +693,9 @@ def getAllPapers(crawler):
 
 def is_author_sketchy(papers,author_info):
     import re # hooray I was supposed to get practice with re for tdi 
-    ### ad hoc function to determine if the author is sketchy or isn't at an american insitution
+    ### ad hoc function to determine if the author is sketchy or isn't at an american / european ish insitution
     def is_author_usa(author_info):
-        #checks to see if anything in the ver_emial or rank indicates non-us instution
+        #checks to see if anything in the ver_emial or rank indicates non-us/eu ish instution
         for key in author_keys_to_check:
             if key in author_info:
                 for string in non_usa_list:
@@ -745,7 +783,6 @@ def saveCurrent(dict2Save, fileName):
             pickle.dump(var2Save, f)
         f.close()
         
-
     outDir = 'outputs'
     
     now = datetime.now()
@@ -804,8 +841,12 @@ def mainPaperScrapeLoop(dbA_path: str, dbB_path: str, main_loop_error: int, erro
                     pathHeadA.getInfoFromPapers(crawler,papers)
                     crawler.author_info.update({crawler.curAuthorID: author_info})
                     print("len papers_this_author = " + str(len(crawler.papersThisAuthor)))
-                    pathHeadA.update_db_papers(crawler)
-                    pathHeadA.update_db_one_author(crawler)
+                    
+                    
+                    if crawler.author_error == False:
+                        pathHeadA.update_db_one_author(crawler)
+                        pathHeadA.update_db_papers(crawler)
+                        print('marked author as done in db')
                     
                 else:
                     missed.append(crawler.curAuthorID)     
@@ -851,7 +892,7 @@ if __name__ == "__main__":
         saveCurrent(crawler.paperDict, 'paperDictA')
         main_loop_error = crawler.main_loop_error
         error_log = crawler.error_log
-        if main_loop_error > 4:
+        if main_loop_error > 9:
             scrape = False
 
 if __name__ != "__main__":
