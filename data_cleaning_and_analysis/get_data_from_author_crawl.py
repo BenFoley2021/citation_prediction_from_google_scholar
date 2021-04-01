@@ -56,12 +56,13 @@ def getPaths(main_dir: str, folderType: str, extension: str or None) -> list:
     Parameters
     ----------
     folderType : str
-        DESCRIPTION.
+        A key word which determines whether the folder is added to the list. eg folders with 
+        "latest_crawler_runfile" will be added to the list so they can be later checked for data.
 
     Returns
     -------
     list
-        DESCRIPTION.
+        The list of paths from which data can be loaded from by load_dicts_from_dir_to_list.
 
     """
     tempList = []
@@ -75,40 +76,6 @@ def getPaths(main_dir: str, folderType: str, extension: str or None) -> list:
                     
     return tempList
     
-def load_dicts_from_dir(fileID: str, paths: list, keysToGet = None) -> dict:
-    """ loads all pickle files which contain fileID into dictionary
-        
-        loops through all the .pckl files in path and updates a dictionary
-        with the contents of each. returns this dict
-    
-    Parameters
-    ----------
-    fileID : TYPE
-        DESCRIPTION.
-    path : TYPE
-        DESCRIPTION.
-
-    Returns
-    -------
-    None.
-
-    """
-    files_read = set()
-    tempDict = {}
-    for path in paths:
-        for file in os.listdir(path):
-            if file.endswith('.pckl') and fileID in file:
-                #pathFile = path + "\\" + file
-                print(file)
-                files_read.add(file)
-                with open(path + "\\" + file,'rb') as f:
-                    if keysToGet:
-                        ### loadin file, removing unwanted keys, updating tempDict
-                        tempDict.update(get_key_vals(keysToGet, pickle.load(f)))
-    
-                    else:                                     
-                        tempDict.update(pickle.load(f))
-    return tempDict, files_read
     
 def load_dicts_from_dir_to_list(fileID: str, paths: list, colNames: dict, files_read: set) -> list:
     """ modifying load_dicts_from_dir to output a list instead of dict. the list
@@ -118,17 +85,26 @@ def load_dicts_from_dir_to_list(fileID: str, paths: list, colNames: dict, files_
     Parameters
     ----------
     fileID : str
-        DESCRIPTION.
+        The key work which determines if the file is read (eg if "I_have_data" in file, it gets read).
     paths : list
-        DESCRIPTION.
-    keysToGet : TYPE, optional
-        DESCRIPTION. The default is None.
+        The list of paths to check for files which have fileID in their name.
+    colNames : list
+        The names of all attributes that we want to get from the list. Corresponds to keys in the 
+        dictionary files.
+    files_read: set
+        The files that we have already processed. If the file name is in this list we skip it.
 
     Returns
     -------
-    list
-        DESCRIPTION.
-
+    out_list : list
+        The processed data, where each item in the list is a data point, and the contains the attributes
+        of that data point. strings and objects are contained in the list representing each row. This is
+        what will be converted to a df later
+        
+    files_read : set
+        The set given as an argument after being updated to include all files loaded during this function
+        call.
+        
     """
 
     list_form = []
@@ -165,49 +141,8 @@ def load_dicts_from_dir_to_list(fileID: str, paths: list, colNames: dict, files_
                         # tempList. append (new row)
                     
     return out_list, files_read
-
-
-# test = os.getcwd() + "\\" + path + "\\" + file
-# pickle.load(test)
-
-
-def readMergeDicts(dir2Read, keysToGet): ### obsoleted
-    """ merges all the .pickle files with "paperDict" into one dict,
-        and all with "citedByDict"
-
-    Parameters
-    ----------
-    dir2Read : TYPE
-        DESCRIPTION.
-
-    Returns
-    -------
-    None.
-
-    """
-    allPapersDict= {}
-    allCitedByDict = {}
     
-    for file in os.listdir(dir2Read):
-        if file.endswith('.pckl'):
-            if 'paperDict' in file:
-                tempVar = get_key_vals(keysToGet, loadPickled(dir2Read,file))
-                try:
-                    allPapersDict.update(tempVar)
-                except:
-                    print('error updating allPapersDict')
-                    
-            elif 'citedByIdDict' in file:
-                tempVar = loadPickled(dir2Read,file)
-                try:
-                    allCitedByDict.update(tempVar)
-                except:
-                    print('error updating allCitedByDict')
-                
-    return allCitedByDict, allPapersDict
-    
-    
-def getFirstAuthor(paperDict: dict) -> set:
+def getFirstAuthor(paperDict: dict) -> set: # this will need to be rewritten to work with a df
     """ getting the first author of each paper
         Technically just getting the first author in the list. The authors appear
         in the order they are listed on the paper (the first author will be first 
@@ -226,78 +161,21 @@ def getFirstAuthor(paperDict: dict) -> set:
     
     return firstAuthorSet
     
-    
-def allPapersDict_todf(allPapersDict: dict) -> pd.DataFrame:
-    """ CURRENTLY DEPREIATED, SWITCHED TO USEING LISTS
-        converting the dict to dataFrame. want the author IDs as a list
-        right now they are a dict in the dict. loop through and update the
-        keys, and get rid of cols we don't want. (dont need "raw" in 
-        the df)
-
-    Parameters
-    ----------
-    allPapersDict : dict
-        DESCRIPTION.
-
-    Returns
-    -------
-    df : TYPE
-        DESCRIPTION.
-
-    """
-    
-    df = pd.DataFrame() 
-    #dict2 = {'urlId': None, 'cited', None, 'title': None, ''}
-    allPapersDict = backUpPaperDict.copy()
-    for key in allPapersDict:
-        allPapersDict[key]['authors'] = \
-            list(allPapersDict[key]['authors'].keys())
-        del allPapersDict[key]['raw']
-    
-        
-    df = pd.DataFrame.from_dict(allPapersDict)
-    df = df.transpose()
-    
-    return df
-    
-def dictToDF(dictIn, cols):
-    """ trying to make a more generalized function to make a df from the dicts
-        CURRENTLY DEPRECIATED, USING LISTS INSTEAD
-
-    Parameters
-    ----------
-    dictIn : TYPE
-        DESCRIPTION.
-    cols : TYPE
-        DESCRIPTION.
-
-    Returns
-    -------
-    df : TYPE
-        DESCRIPTION.
-
-    """
-    
-    df = pd.DataFrame() 
-    #dict2 = {'urlId': None, 'cited', None, 'title': None, ''}
-    # allPapersDict = backUpPaperDict.copy()
-    # for key in allPapersDict:
-    #     allPapersDict[key]['authors'] = \
-    #         list(allPapersDict[key]['authors'].keys())
-    #     del allPapersDict[key]['raw']
-    
-        
-    df = pd.DataFrame.from_dict(dictIn)
-    df = df.transpose()
-    
-    return df
-    
 def isInDb(id_1: str, table: str, con: object) -> bool:
     
     """ checks to see if the id_1 is present in the index of the "table" TABLE
         in the database which is connected to "con"
         
         add hoc function sometimes used by me to check whats where
+        
+    Parameters:
+        id_1: Str, the value to be checked to see if it's a primary key in the table
+        table: Str, the table in the database to check for id_1
+        con: sqllite3 database connection
+        
+    Returns:
+        None
+        
     """
     try: 
         sql = "SELECT EXISTS(SELECT 1 FROM " + table + " WHERE id=?)"
@@ -364,23 +242,22 @@ def updateDbFirstAuthor(firstAuthors: set) -> None:
     
     return None
     
-def paperlist_to_df(paper_list):
+def paperlist_to_df(paper_list: list) -> pd.DataFrame:
     """ takes the list of papers and converts to df.
-        
-        how to use the columns names
-            could loop through list until hit another col name
-            place everything before into a df, cat with cur df
+
+        This turned out just to be a one liner, leaving as funciton in case more logic needs to be
+        added later                    
             
-            repeat this may be slow, but meh
-            
-            i think other ways would require an intermediate formatting step
-            
-            
+                expected column names
                 colNames = {"titleID": 0, "title_main": 1, "cited": 2, "authors": 3, "pubDate": 4, \
                 "journal": 5, "vol": 6, "issue": 7, "pages": 8, "publisher": 9, \
                 "description": 10, "citedYear": 11, "allscrap_auth_id": 12, "urlID": 13, \
                 "all": 14}
             
+        Parameters:
+            paper_list: A list where each item in the list is the row, and sublists are
+                        values of that row. The first item in the list contains the columns names
+                        (these were hardcoded by load_dicts_from_dir_to_list)
             
     """
     
@@ -551,25 +428,6 @@ if __name__ == "__main__":
     
     
     
-    #df_list = load_all_dfs(out_dir)
-    
-    
-    #firstAuthors = getFirstAuthor(papers)
-    # author_dirs = getPaths("authorList", "outputs")
-    # author_papers = load_dicts_from_dir("paperDictA", author_dirs)
-    
-    #updateDbFirstAuthor(firstAuthors)
 
-    #paper_graph_dirs = getPaths("paperGraph", "outputs")
-    
-    ### loading all the papers we've gotten so far by crawling the authors gs pages
-    # tempDict = {}
-    # for i, thing in enumerate(papers):
-    #     if i > 20:
-    #         break
-    #     i += 1
-        
-    #     tempDict.update({thing: papers[thing]})
-        
         
 
