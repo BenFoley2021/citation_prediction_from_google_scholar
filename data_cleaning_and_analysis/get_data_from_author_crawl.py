@@ -24,8 +24,6 @@ from datetime import datetime
 
 from generic_func_lib import *
 
-
-
 def get_key_vals(keysToGet: set,dictIn: dict) -> dict: # i think this is also obsoleted
     def delKeys(singleDict):
         for key in list(singleDict.keys()):
