@@ -2,6 +2,15 @@
 """
 Created on Sat Jan 30 16:53:58 2021
 
+want to try other one hot encoding strategies to see if they are faster
+likely some packages which are better than my solution
+
+https://www.kaggle.com/alexandrnikitin/efficient-xgboost-on-sparse-matrices
+
+possible resources for dealing with names https://towardsdatascience.com/python-tutorial-fuzzy-name-matching-algorithms-7a6f43322cc5
+https://regex101.com/r/tR7kV2/1
+https://stackoverflow.com/questions/31248856/regex-full-name-to-abbreviated-name
+
 converts the input df into one hot encoded outputs
 
 misc to do:
@@ -34,7 +43,8 @@ import time
 import scipy.sparse
 from scipy.sparse import coo_matrix, lil_matrix
 from generic_func_lib import *
-
+from scipy.sparse import csr_matrix, hstack
+        
 def getTok2(dfIn, col, col_2_write):
     """ Using spacy to get the tokens from the title
     """
@@ -234,7 +244,7 @@ def popBow(dicBow: dict, dicMain: dict, intermediate_dict: dict): ####### this i
             # if this token got merged with another one (e.g. batteries -> battery)
             # then we change the tok to its base (lemma, root, whatever), as thats 
             # what will be in dicBow
-            if tok in intermediate_dict:
+            if tok in intermediate_dict: # intermediate_dict is the hashmap made by build custom lookup table
                 tok = intermediate_dict[tok]
         
             if tok in dicBowTemp:
@@ -432,257 +442,6 @@ def dropCust1(dfIn):
             
     return dfIn
 
-def getJournalName2(dfIn):
-    """ this approach is to take all characters from before the first numeric
-        in the jref string, and set them as the journal name"
-        
-        this approach missed occasionally. if jref starts with num then 
-        it returns "" for that row
-        
-        can refine later 
-
-    Parameters
-    ----------
-    dfIn : TYPE
-        DESCRIPTION.
-
-    Returns
-    -------
-    None.
-
-    """
-    
-    def getStrBeforeNumeric(x):
-        """returns the string to left of the first numberic character
-        
-
-        Parameters
-        ----------
-        x : TYPE
-            DESCRIPTION.
-
-        Returns
-        -------
-        Str
-
-        """
-        
-        tempStr = str()
-        for i in x:
-            #print(i)
-            if i.isdigit() == False:
-                tempStr += i
-            else:
-                break
-        return tempStr
-        
-        
-        
-    #dfAll['jref'].apply(lambda y: custom1(y))
-    dfIn['jName'] = dfIn['jref'].apply(lambda x: getStrBeforeNumeric(x))
-    
-    
-    return dfIn
-    
-def cleanJName(dfIn):
-    """
-    particulary problematic
-    Ap. J.  Ap.J. ApJ ApJ, Vol. ApJ Letters, ApJL
-    
-    #dont have anything to deal with advphys advances or advances phys
-    """    
-
-    
-    def custom3(x):
-        """ removing begining and end spaces, ","  '.'
-        cleaning sequential, basic functions like strip first
-
-        """
-        x = x.lower()
-        x = x.strip()
-        x = x.replace('vol',"")
-        x = x.replace('volume',"")       
-        # while x[-1] == "." or x[-1] == ",":
-        #     x = x[:-1]
-    
-    dfIn['jName'] = dfIn['jName'].apply(lambda x: custom3(x))
-    
-    return dfIn['jName']
-    
-def tempCleanJName(dfIn):
-    """ container for test code, trying combine the various permutations of a
-        journals name into one string
-        
-        at the moment this contains ad hoc things and isn't meant to be a 
-        permanate solution'
-
-    """
-    def custom4(x):
-        
-        try:
-            if x[-1] == 'v' and x[-2] == ' ':
-                x = x[:-3]
-        except:
-            pass
-            
-        return x
-    
-    dfTemp = dfIn['jName']
-    
-    
-    # months = ['january', 'february', 'march', 'april', 'may', 'june', 'july', \
-    #           'august', 'september','october','december']
-    
-    # for month in months:
-    #     dfTemp.str.replace(month,"")
-    
-   #pickle.dump(df, open( "textTest2.p", "wb" ) )
-    
-    dfTemp = dfTemp.str.lower()
-    dfTemp = dfTemp.str.strip()
-    dfTemp = dfTemp.str.replace('vol',"")
-    dfTemp = dfTemp.str.replace('volume',"")
-    dfTemp = dfTemp.str.replace('(',"")
-    dfTemp = dfTemp.str.replace(")","")
-    dfTemp = dfTemp.str.replace(".","")
-    dfTemp = dfTemp.str.replace(",","")
-    dfTemp = dfTemp.str.replace("ume","")
-    dfTemp = dfTemp.str.replace(":","")
-    dfTemp = dfTemp.str.replace("[","")
-    dfTemp = dfTemp.str.replace("&","and")
-    dfTemp = dfTemp.str.replace(";","")
-    dfTemp = dfTemp.str.replace("doi","")
-    dfTemp = dfTemp.str.replace("~","")
-    dfTemp = dfTemp.str.replace(" lett","letter")
-    dfTemp = dfTemp.str.replace("letters","letter")
-    dfTemp = dfTemp.str.replace("letterers","letter")
-    dfTemp = dfTemp.str.replace("adv in","advances in")
-    dfTemp = dfTemp.str.replace("adv","advanced")
-    
-    dfTemp = dfTemp.str.replace("grav","gravity")
-    
-    dfTemp = dfTemp.str.replace("scienc","science")
-    dfTemp = dfTemp.str.replace("theoret","theoretical")
-    dfTemp = dfTemp.str.replace("techno","technology")
-    dfTemp = dfTemp.str.replace("techn","technology")
-    dfTemp = dfTemp.str.replace("technol","technology")
-    dfTemp = dfTemp.str.replace("technologies","technology")
-    dfTemp = dfTemp.str.replace("issn","")
-    dfTemp = dfTemp.str.replace("isn","")
-    dfTemp = dfTemp.str.replace("commun","communication")
-    dfTemp = dfTemp.str.replace("commu","communication")
-    dfTemp = dfTemp.str.replace("communications","communication")
-    dfTemp = dfTemp.str.replace("physic","phys")
-    dfTemp = dfTemp.str.replace("physics","phys")
-    dfTemp = dfTemp.str.replace(" geom"," geometry")
-    
-    dfTemp = dfTemp.str.replace('march',"")
-    dfTemp = dfTemp.str.replace('january',"")
-    dfTemp = dfTemp.str.replace('february',"")
-    dfTemp = dfTemp.str.replace('april',"")
-    dfTemp = dfTemp.str.replace('may',"")
-    dfTemp = dfTemp.str.replace('june',"")
-    dfTemp = dfTemp.str.replace('july',"")
-    dfTemp = dfTemp.str.replace('august',"")
-    dfTemp = dfTemp.str.replace('september',"")
-    dfTemp = dfTemp.str.replace('october',"")
-    dfTemp = dfTemp.str.replace('december',"")
-    dfTemp = dfTemp.str.replace('novemeber',"")
-    
-    dfTemp = dfTemp.apply(custom4)
-    
-    
-    dfTemp = dfTemp.str.strip()
-    
-    dfTempU = dfTemp.value_counts()
-    
-    dfTempU = dfTempU[dfTempU > 4]
-    
-    jNameSet = set(dfTemp.to_list())
-    
-    
-    return dfTemp
-
-def customLookUpSpacy(dicBow):
-    """ trying to combine as many lemma as possible, keys in customLookUpDict
-        point to the root (lemma (ex gentics => gentic). this function declares custom
-        word => lemma and updates dicBow by moving all counts of the word to the
-        lemma a poping the work. Ex all counts of gentics are added to gentic, then
-        gentics is popped
-        
-        the custom lookup table here will be combined another lookUpDict generated
-        elsewhere in future versions
-    """
-    import pickle
-    #lemma i skipped on the first pass 
-    # bais, binary, bipd, bivariant, bounds, braching
-    # it seems like it would be possible to take of all the plurals by looking through
-    # and ordered list with two pointers. can also extend to other suffixes
-    
-    customLookUpDict = {'batteries':'battery','bayesian':'bayes', \
-                     'behavioral':'behaviour', 'behaviors': "behaviour", \
-                     'behaviours': 'behaviour', 'behavioural': 'behaviour', \
-                     'beliefs': 'believe', 'beliefs': 'believe', \
-                     'benchmarking': 'benchmark', 'benchmarks':'benchmark', \
-                     'bifurcation': 'bifurcate', 'bifurcations': 'bifurcate', \
-                     'bilayered': 'bilayer', 'bilayers': 'bilayer', \
-                     'billiards': 'billiard', \
-                     'biometrics': 'biometric', 'biosignatures': 'biosignature', \
-                     'biphotons': 'biphoton', 'bipolarons': 'bipolaron', \
-                     'birefringent': 'birefringence', \
-                     'blockchains': 'blockchain', \
-                     'caching': 'cache',
-                     'calculations': 'calculation', 'calculated':'calculation', \
-                     'calibrated': 'calibrate', 'calibration':'calibrate', 'calibrations': 'calibrate', \
-                     'calorimeters': 'calorimetry', 'calorimetric': 'calorimetry', 'calorimeter': 'calorimetry', \
-                     'calorons': 'calorons', 'cameras': 'camera', \
-                     'campaigns': 'campaign', \
-                     'cancelation': 'cancellation', 'cancellations': 'cancellation', \
-                     'capacitance': 'capacitive', 'capacitively': 'capacitive', \
-                     'capacitors' : 'capacitive', 'capacitor': 'capacitive', \
-                     'ceramics': 'ceramic', 'chalcogenides': 'chalcogenide', \
-                     'chromodynamics': 'chromodynamic', 'chromospheric': 'chromosphere', \
-                     'colloidal': 'colloid', 'colloids': 'colloid',
-                     'combinatorics': 'combinatorics', 'comets': 'comet', \
-                     'elastodynamics': 'elastodynamic', 'elastomers': 'elastomer', \
-                     'elastoplasticity': 'elastoplastic', \
-                     'electrocatalytic': 'electrocatalyst', \
-                     'electrochemical': 'electrochemistry', 'electrochemically': 'electrochemistry', \
-                     'electrodynamic': 'electrodynamics', \
-                     'electroluminescence': 'electroluminescent',
-                     'electrolytes': 'electrolyte', \
-                     'electromechanical': 'electromechanics', \
-                     'electromigrated': 'electromigration',
-                     'electrophoretic': 'electrophoresis',
-                     'electrostatically': 'electrostatic', 'electrostatically': 'electrostatic', \
-                     'emitters': 'emitter', 'emotions': 'emotion', \
-                     'emulsions': 'emulsion', \
-                     'endomorphisms': 'endomorphism', \
-                     'enriched': 'enrich', \
-                     'ensembles': 'ensemble',
-                     'entangled': 'entangle',
-                     'ferromagnets': 'ferromagnet', 'ferromagnetically': 'ferromagnetic', \
-                     'gaussians' : 'gaussian', 'gaussianitie': 'gaussianities', \
-                     'genomics': 'genomic', 'genetics': 'genetic',
-                     'geodesics': 'geodesic', \
-                     'neutrinos': 'neutrino'}
-        
-        
-    
-
-    #dicBowKeys = pickle.load(open("dicBowKey.pckl", "rb" ))
-    #dicBowKeys = dicBow.keys()
-
-    for key in customLookUpDict:
-        if key in dicBow:
-            try:
-                dicBow[customLookUpDict[key]] += dicBow[key]
-                dicBow.pop(key)
-            except:
-                print('couldnt find ' + key)
-
-    return dicBow
-
 def buildCustomLookup(dicBow):
 
     def checkSim(word1: str, word2: str) -> list: #returns list of strs
@@ -805,7 +564,7 @@ def buildCustomLookup(dicBow):
     return lookUpDict
 
 def buildCustomLookup2(dicBow):
-    # trying to break this down and make it more readable
+    # trying to break this down and make it more readable, clearly havent done it yet
     # then need to test more throughly and make sure it works
     def checkSim(word1: str, word2: str) -> list: #returns list of strs
         """ if similar return true, else false
@@ -1220,22 +979,57 @@ def clean_authors(df):
     
     return df
 
+def sparse_dummies(df, column):
+    """Returns sparse OHE matrix for the column of the dataframe"""
+    # a much simpler one hot encoder if I'm not worried about customization
+    
+    from pandas import Categorical
+
+    categories = Categorical(df[column])
+    #column_names = np.array([f"{column}_{str(i)}" for i in range(len(categories.categories))])
+    column_names = np.array([str(cat) for cat in categories.categories])
+
+    N = len(categories)
+    row_numbers = np.arange(N, dtype=np.int)
+    ones = np.ones((N,))
+    return csr_matrix((ones, (row_numbers, categories.codes))), column_names
+
 if __name__ == "__main__":
     ############ load the data, keeping the ids col as a str
-    # df_list = load_all_dfs("cleaned_data")
+    df_list = load_all_dfs("cleaned_data")
     
     # # for testing we want this to run fast
     # df_list = df_list[0:1]
     
-    # df = cat_dfs(df_list)
-    df = pd.read_csv("cleaned_data//df_for_results__28-03-2021 10_02_35.csv")
-    df = df.iloc[0:10000]
+    df = cat_dfs(df_list)
+    #df = pd.read_csv("cleaned_data//df_for_results__28-03-2021 10_02_35.csv")
+    #df = df.iloc[0:10000]
     
     ### droping some cols we aren't using in the hopes that this runs faster
     cols_to_drop = ['Unnamed: 0', 'title_main', 'Conference', 'Source', 'book', \
                     'publisher', 'vol', 'issue', 'pages', 'urlID', 'citedYear']
     
     df = df.drop(labels = cols_to_drop, axis = 1)
+    
+    df.reset_index()
+    categorical_features = ['year','Authors','Journal']
+    matrices = []
+    all_column_names = []
+    # creates a matrix per categorical feature
+    for c in categorical_features: #    https://www.kaggle.com/alexandrnikitin/efficient-xgboost-on-sparse-matrices
+
+        matrix, column_names = sparse_dummies(df, c)
+        matrices.append(matrix)
+        all_column_names.append(column_names)
+    
+
+
+    train_sparse = hstack(matrices, format="csr")
+    feature_names = np.concatenate(all_column_names)
+    del matrices, all_column_names
+
+
+
     #clean_authors(df)
     ### loading spacy library and stopwords
     nlp = spacy.load('en_core_web_sm')

@@ -24,6 +24,11 @@ to do:
     general xgboost 
     https://projector-video-pdf-converter.datacamp.com/3679/chapter2.pdf
     https://github.com/tqchen/xgboost/tree/master/demo    
+    
+    example of hyper parameter tuning for predicting the number of comments
+    as fb post gets
+    
+    
 @author: Ben Foley
 """
 
