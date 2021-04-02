@@ -13,25 +13,21 @@ https://stackoverflow.com/questions/31248856/regex-full-name-to-abbreviated-name
 
 converts the input df into one hot encoded outputs
 
-misc to do:
-    strip (the autors have blank space)
-
-to do today:
-    change any synomym consolidation things so they save an intermediate hash map
-    which points from the token that will be present in dicMain to the key is
-    present in dicBow
+need to rewrite the encoder using built in (and faster functionality). If deal with each column
+indiviudally instead of bundling them all together, can write smaller more specfic functions which
+make best use of built in functionality of pandas. 
     
-to do this week:
-    break popBow and setUpBow down into smaller functions so they are more readable.
-    this encoding is the meat of the project, and should be easily readable, since 
-    hopefully someonw will actually look at it
+    spacy is really slow, and it's not that useful because theres so many science words not in its
+    database. get rid of it and rely on the custom lookup function to do things like qubits -> qubit'
+    
+    expand each column in as sparse array, stack the sparse array for each row to get a sparse matrix,
+    concat with exisiting sparse matrices resuling from processing other cols. expand out columns until done.
+    this way columns like authors and title can be treated seperately.
+    
 
-    custom lookup
-        generally looks good, does miss some things though
-            mass -> mask
-
-    also need to put the step which makes everything all lowercase
-    into one funtion, it looks like some caps locks are sneaking through
+custom lookup
+    generally looks good, does miss some things though
+        mass -> mask
 
 @author: Ben Foley
 """

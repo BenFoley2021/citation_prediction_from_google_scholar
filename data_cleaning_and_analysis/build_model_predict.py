@@ -26,7 +26,7 @@ to do:
     https://github.com/tqchen/xgboost/tree/master/demo    
     
     example of hyper parameter tuning for predicting the number of comments
-    as fb post gets
+    as fb post gets https://blog.cambridgespark.com/hyperparameter-tuning-in-xgboost-4ff9100a3b2f
     
     
 @author: Ben Foley
