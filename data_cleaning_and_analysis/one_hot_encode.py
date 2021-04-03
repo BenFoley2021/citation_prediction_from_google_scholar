@@ -24,6 +24,14 @@ make best use of built in functionality of pandas.
     concat with exisiting sparse matrices resuling from processing other cols. expand out columns until done.
     this way columns like authors and title can be treated seperately.
     
+other one hot encoders https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.OneHotEncoder.html
+can pass this one a list of expected catagories. can do custom processing on the cols first to 
+considate synomnys and authors, then use this to get the sparse mat for each col
+    
+
+current progress on other one hot methods: one_hot_encode_col(df, col, cats_to_use)
+    works, but is still pretty slow
+
 
 custom lookup
     generally looks good, does miss some things though
@@ -439,7 +447,7 @@ def dropCust1(dfIn):
     return dfIn
 
 def buildCustomLookup(dicBow):
-
+    # this can probably be done in 1/20 the lines with re 
     def checkSim(word1: str, word2: str) -> list: #returns list of strs
         """ if similar return true, else false
         the exact criteria is tricky
@@ -529,8 +537,15 @@ def buildCustomLookup(dicBow):
     ###### preparing inputs
     lookUpDict= {}
     dicBowKeys = [] 
-    for key in dicBow.keys(): 
-        dicBowKeys.append(key) 
+    
+    if type(dicBow) == dict:
+        for key in dicBow.keys(): 
+            dicBowKeys.append(key) 
+            
+    elif type(dicBow) == set:
+        for key in dicBow: 
+            dicBowKeys.append(key) 
+        
     dicBowKeys.sort() 
     
     point1 = 0 # initializing pointers 1 and 2
@@ -989,6 +1004,110 @@ def sparse_dummies(df, column):
     row_numbers = np.arange(N, dtype=np.int)
     ones = np.ones((N,))
     return csr_matrix((ones, (row_numbers, categories.codes))), column_names
+
+def get_all_cat(df_col: pd.Series):
+    """ Converts a df columns column where each row contains a list of tokens,
+        into a set 
+
+    Parameters
+    ----------
+    df_col : pd.Series
+        The column of a data frame containing strs to be split apart, and the
+        the parts converted to a set.
+    splitter : str
+        The character to split each item in series by.
+
+    Returns
+    -------
+    all_authors : set
+        A set of all unique items in the columns
+
+    """
+    
+    all_cats_set = set()
+    
+    #all_cat_list = [item for sublist in regular_list for item in df_col.to_list()]
+    all_cat_list = [item for sublist in df_col.to_list() for item in sublist]
+
+    for cat in all_cat_list:
+        all_cats_set.add(cat)
+        
+    return all_cats_set
+
+def one_hot_encode(x, cats_to_use):
+    # one hot encodes the column  https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.OneHotEncoder.html
+    from sklearn.preprocessing import OneHotEncoder
+    enc = OneHotEncoder(handle_unknown='ignore', categories = list(cats_to_use))
+    
+    enc.fit(temp)
+    
+    return None
+
+def one_hot_encode_col(df, col, cats_to_use):
+    # this works but its also really slow
+    #https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.MultiLabelBinarizer.html
+    from sklearn.preprocessing import MultiLabelBinarizer 
+
+    mlb = MultiLabelBinarizer(sparse_output=True, classes = list(cats_to_use))
+    
+    df = df.join(
+                pd.DataFrame.sparse.from_spmatrix(
+                    mlb.fit_transform(df.pop(col)),
+                    index=df.index,
+                    columns=mlb.classes_))
+    
+    return df
+
+
+def one_hot_encode_for_col(df_col, cats_to_use):
+    # one hot encodes the column  https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.OneHotEncoder.html
+    # https://stackoverflow.com/questions/45312377/how-to-one-hot-encode-from-a-pandas-column-containing-a-list
+    
+    from sklearn.preprocessing import OneHotEncoder
+    enc = OneHotEncoder(handle_unknown='ignore', categories = list(cats_to_use))
+    df_col_list= df_col.to_list()
+    enc.fit(df_col_list)
+    
+    return None
+
+def str_col_to_list(x, splitter): # meant to be used with apply or lambda function
+
+    return [y for y in x.split(splitter)]
+    
+def merge_synonym(x: list, synonyms: dict):
+    #meant to be called by a lambda function
+    
+    for i, thing in enumerate(x):
+        if thing in synonyms:
+            x[i] = synonyms[thing]
+            
+    return x
+
+def make_lower(x):
+    
+    return [y.lower() for y in x]
+
+def process_cols(df):
+    # converts each col to one hot encoded, calls functions to get
+    # all the cats, clean cats, and finally uses the set of cats for each
+    # col to get sparse mats. 
+    
+    df['Authors_list'] = df['Authors'].apply(lambda x: str_col_to_list(x, ","))
+    df['titleID_list'] = df['titleID'].apply(lambda x: str_col_to_list(x, " "))
+    df['titleID_list'] = df['titleID_list'].apply(lambda x: make_lower(x))
+    
+    # getting catagories
+    authors = get_all_cat(df['Authors_list'])
+    title_words = get_all_cat(df['titleID_list'])
+
+    # getting synonyms from title words
+    synonyms = buildCustomLookup(title_words)
+    
+    # consolidating synomyms
+    df['titleID_list2'] = df['titleID_list'].apply(lambda x: \
+                                                   merge_synonym(x, synonyms))
+    
+    ## got this far on 4/2 7 pm
 
 if __name__ == "__main__":
     ############ load the data, keeping the ids col as a str
