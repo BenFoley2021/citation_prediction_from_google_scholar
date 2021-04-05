@@ -1043,20 +1043,45 @@ def one_hot_encode(x, cats_to_use):
     
     return None
 
-def one_hot_encode_col(df, col, cats_to_use):
-    # this works but its also really slow
-    #https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.MultiLabelBinarizer.html
+def one_hot_encode_col(df_col, cats_to_use: set):
+    """ df(col) -> sparse df
+            # this works but its also really slow
+         #https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.MultiLabelBinarizer.html
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DF containing all the relevant data.
+    col : Str
+        The column containg a list of things to be one hot encoded.
+    cats_to_use : set
+        The catagories for one hot encoding.
+
+    Returns
+    -------
+    output : sparse pd.DataFrame
+        The one hot encoded column from df. 
+
+    """
+    
     from sklearn.preprocessing import MultiLabelBinarizer 
 
     mlb = MultiLabelBinarizer(sparse_output=True, classes = list(cats_to_use))
     
-    df = df.join(
-                pd.DataFrame.sparse.from_spmatrix(
-                    mlb.fit_transform(df.pop(col)),
-                    index=df.index,
-                    columns=mlb.classes_))
+
+    output = pd.DataFrame.sparse.from_spmatrix(
+                mlb.fit_transform(df_col),
+                index=df.index,
+                columns=mlb.classes_)
     
-    return df
+    
+    #df = df.join(
+    #            pd.DataFrame.sparse.from_spmatrix(
+    #                mlb.fit_transform(df.pop(col)),
+    #                index=df.index,
+    #                columns=mlb.classes_))
+    
+    return output
 
 
 def one_hot_encode_for_col(df_col, cats_to_use):
@@ -1083,14 +1108,36 @@ def merge_synonym(x: list, synonyms: dict):
             
     return x
 
+def remove_synonym(setIn: set, synonyms: dict):
+    # removes anything from the set which was found to be a synonym
+    temp_set = set()
+    for thing in setIn:
+        if thing in synonyms:
+            temp_set.add(thing)
+
+    for thing2 in temp_set:
+        setIn.remove(thing2)
+
+    return setIn
+
 def make_lower(x):
     
     return [y.lower() for y in x]
+
+def threshold_sparse_df(dfIn, threshold):
+
+    #need to drop columns with less then threshold counts
+    return dfIn.drop(dfIn.columns[dfIn.apply(lambda col: col.sum() < threshold)], axis=1)
+
 
 def process_cols(df):
     # converts each col to one hot encoded, calls functions to get
     # all the cats, clean cats, and finally uses the set of cats for each
     # col to get sparse mats. 
+    
+    
+    # need a good way to get the dummies for normal cols 
+    # https://towardsdatascience.com/encoding-categorical-features-21a2651a065c
     
     df['Authors_list'] = df['Authors'].apply(lambda x: str_col_to_list(x, ","))
     df['titleID_list'] = df['titleID'].apply(lambda x: str_col_to_list(x, " "))
@@ -1108,18 +1155,87 @@ def process_cols(df):
     df['titleID_list2'] = df['titleID_list'].apply(lambda x: \
                                                    merge_synonym(x, synonyms))
     
-    ## got this far on 4/2 7 pm
+    title_words = remove_synonym(title_words, synonyms)
+        
+    title_words_df = one_hot_encode_col(df['titleID_list2'], title_words) # this is a sparse df
+    
+    title_words_df2 = threshold_sparse_df(title_words_df, 2)
+    
+    journal_df = pd.get_dummies(df['Journal'], sparse = True)
+    
+    journal_df = threshold_sparse_df(journal_df, 3)
+    
+def custom_encoder(df, categorical_features):
+    
+    nlp = spacy.load('en_core_web_sm')
+    spacy_stopwords = spacy.lang.en.stop_words.STOP_WORDS
+    customize_stop_words = ['-','Single']  ##### adding custom stopwords
+    for w in customize_stop_words:
+        nlp.vocab[w].is_stop = True
+
+    extraWords = ['year','Authors','Journal'] ####### cols from the df to be added to the bow
+    toks2Rem = ['\n  ','--',"",',',"\to","..."] # if we seem these tokens get rid of them
+    symbol2Rem = set(['%','$','{','}',"^","/", "\\",'#','*',"'",\
+                  "''", '_','(',')', '..',"+",'-',']','[']) # remove 
+    
+    start = time.time()
+    dicBow,dicMain = setUpBow2(df,categorical_features) ### get initial data
+    end = time.time()### it doesn't look like I acutally use tok set
+    
+    setUpBow1 = end - start
+    ####################
+    dicBow = customProcTok(dicBow,symbol2Rem) #### this isn't working right
+    print('did customProcTok')
+
+    print('trimmed bow')
+    ###############
+    toks2Rem = ['\n  ','--',"",',',"\to","...","the", "what", "that", "then", \
+                "and", "for", "couldnt find", "from", 'with', "non", "in", "of"]
+    dicBow = remTok(dicBow,toks2Rem)
+    ############### work on this later once we have more words
+    #dicBow = customLookUpSpacy(dicBow)
+    word_to_root = buildCustomLookup(dicBow)
+    
+    start = time.time()
+    print('starting popBow')
+    """ this is also for later
+    """
+    #labelY,bowVecY,dicWord2Vec,dicWordPaper = popBow(dicBow,futureDict)
+    
+    thresh = 10
+    dicBow = trimBow2(dicBow, thresh)
+    
+    labelX,bowVecX,dicWord2Vec,dicWordPaper = popBow(dicBow,dicMain, word_to_root)
+    
+    print('finished pop Bow')
+    end = time.time()
+    popBow1 = end - start
+        
+    outLoc = 'one_hot_encoded_data'
+
+    fList = [dicBow,dicMain,labelX,dicWord2Vec]
+    nList = ['dicBow','dicMain','labelX', 'zDic2WordVec']
+
+    saveOutput2(fList,nList,outLoc)  ###### saving variables in the list with the desired names
+    
+    ############### converting bowvec to csc and saving it
+    bowVecX = bowVecX.tocsc()
+    path = outLoc + '/' + 'bowVecSparseX.npz'  
+    scipy.sparse.save_npz(path, bowVecX)  ##### saving the sparse matrix
+    
+    return dicBow, dicMain
 
 if __name__ == "__main__":
     ############ load the data, keeping the ids col as a str
-    df_list = load_all_dfs("cleaned_data")
+    #df_list = load_all_dfs("cleaned_data")
     
     # # for testing we want this to run fast
     # df_list = df_list[0:1]
     
-    df = cat_dfs(df_list)
-    #df = pd.read_csv("cleaned_data//df_for_results__28-03-2021 10_02_35.csv")
-    #df = df.iloc[0:10000]
+    #df = cat_dfs(df_list)
+    
+    df = pd.read_csv("cleaned_data//df_for_results__28-03-2021 10_02_35.csv")
+    df = df.iloc[0:10000]
     
     ### droping some cols we aren't using in the hopes that this runs faster
     cols_to_drop = ['Unnamed: 0', 'title_main', 'Conference', 'Source', 'book', \
@@ -1129,6 +1245,11 @@ if __name__ == "__main__":
     
     df.reset_index()
     categorical_features = ['year','Authors','Journal']
+    
+    process_cols(df)
+    
+    #dicBow, dicMain = ustom_encoder(df, categorical_features)
+    
     matrices = []
     all_column_names = []
     # creates a matrix per categorical feature
