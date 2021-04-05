@@ -1094,8 +1094,9 @@ def process_cols(df):
     
     df['Authors_list'] = df['Authors'].apply(lambda x: str_col_to_list(x, ","))
     df['titleID_list'] = df['titleID'].apply(lambda x: str_col_to_list(x, " "))
-    df['titleID_list'] = df['titleID_list'].apply(lambda x: make_lower(x))
     
+    df['Authors_list'] = df['Authors_list'].apply(lambda x: make_lower(x))
+    df['titleID_list'] = df['titleID_list'].apply(lambda x: make_lower(x))
     # getting catagories
     authors = get_all_cat(df['Authors_list'])
     title_words = get_all_cat(df['titleID_list'])
