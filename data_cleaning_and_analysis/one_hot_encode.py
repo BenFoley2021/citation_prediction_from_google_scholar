@@ -1165,6 +1165,12 @@ def process_cols(df):
     
     journal_df = threshold_sparse_df(journal_df, 3)
     
+    title_words_df2.join(journal_df)
+    
+    ### trying out join
+    title_words_df2.join(journal_df)
+    
+    
 def custom_encoder(df, categorical_features):
     
     nlp = spacy.load('en_core_web_sm')
