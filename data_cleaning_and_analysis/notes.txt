@@ -1,0 +1,3 @@
+
+dimensionlity reduction with sparse
+https://scikit-learn.org/stable/modules/generated/sklearn.decomposition.TruncatedSVD.html

@@ -2,40 +2,11 @@
 """
 Created on Sat Jan 30 16:53:58 2021
 
-want to try other one hot encoding strategies to see if they are faster
-likely some packages which are better than my solution
+trying to write a general function which makes it easy to parrallelize all the
+df operations
 
-https://www.kaggle.com/alexandrnikitin/efficient-xgboost-on-sparse-matrices
+currently on TypeError: string indices must be integers
 
-possible resources for dealing with names https://towardsdatascience.com/python-tutorial-fuzzy-name-matching-algorithms-7a6f43322cc5
-https://regex101.com/r/tR7kV2/1
-https://stackoverflow.com/questions/31248856/regex-full-name-to-abbreviated-name
-
-converts the input df into one hot encoded outputs
-
-need to rewrite the encoder using built in (and faster functionality). If deal with each column
-indiviudally instead of bundling them all together, can write smaller more specfic functions which
-make best use of built in functionality of pandas. 
-    
-    spacy is really slow, and it's not that useful because theres so many science words not in its
-    database. get rid of it and rely on the custom lookup function to do things like qubits -> qubit'
-    
-    expand each column in as sparse array, stack the sparse array for each row to get a sparse matrix,
-    concat with exisiting sparse matrices resuling from processing other cols. expand out columns until done.
-    this way columns like authors and title can be treated seperately.
-    
-other one hot encoders https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.OneHotEncoder.html
-can pass this one a list of expected catagories. can do custom processing on the cols first to 
-considate synomnys and authors, then use this to get the sparse mat for each col
-    
-
-current progress on other one hot methods: one_hot_encode_col(df, col, cats_to_use)
-    works, but is still pretty slow
-
-
-custom lookup
-    generally looks good, does miss some things though
-        mass -> mask
 
 @author: Ben Foley
 """
@@ -50,7 +21,8 @@ from generic_func_lib import *
 from scipy.sparse import csr_matrix, hstack
 #from pandarallel import pandarallel
 import math
-from multiprocessing import  Pool
+import multiprocessing
+from multiprocessing import Pool
 from functools import partial
         
 def getTok2(dfIn, col, col_2_write):
@@ -1129,13 +1101,73 @@ def make_lower(x):
     return [y.lower() for y in x]
 
 def threshold_sparse_df(dfIn, threshold):
-
     #need to drop columns with less then threshold counts
     return dfIn.drop(dfIn.columns[dfIn.apply(lambda col: col.sum() < threshold)], axis=1)
 
-def split_df(df, num):
-        
-    return np.array_split(df, num)
+def str_col_to_list_par(df_col, splitter): # meant to be used with apply or lambda function
+    def custom(x, splitter):
+        return [y for y in x.split(splitter)]
+    
+    df_col = df_col.apply(lambda x: custom(x, splitter))
+                          
+    return df_col
+
+#############3
+def parallelize(data, func, num_of_processes=4):
+    """ func is the partial function
+    """
+    data_split = np.array_split(data, multiprocessing.cpu_count())
+    pool = Pool(num_of_processes)
+    data = pd.concat(pool.map(func, data_split))
+    pool.close()
+    pool.join()
+    return data
+
+def run_on_subset(func, data_subset):
+    return data_subset.apply(func, axis=1)
+
+def run_on_subset_mod(func, data_subset):
+    return data_subset.apply(func)
+
+def parallelize_on_rows(data, func, num_of_processes=4):
+    return parallelize(data, partial(run_on_subset_mod, func), num_of_processes)
+#################
+
+#### 
+def general_multi_proc(func, interable, *args):
+    """ func is the function we want to run, interable is the thing (usually
+        a df or array) that we want to split up and run the function on in
+        parrallel, *args are additional arguments that need to be passed to 
+        func
+    
+    Parameters
+    ----------
+    func : Function
+        The function to be run, takes iterable and *args as arguments.
+    interable : Anything which can be split up with np.array_split
+        The thing to be split up and run in parallel.
+    *args : arguments needed by func
+        DESCRIPTION.
+    Returns
+    -------
+    None.
+
+    """
+    
+    print(*args)
+    fp = partial(func, *args)
+    data_split = np.array_split(interable, multiprocessing.cpu_count())
+    process_pool = multiprocessing.Pool(multiprocessing.cpu_count())
+    output = process_pool.map(fp, data_split)
+    print(output)
+
+
+def test_func1(x):
+    return x**2
+
+def get_dummies_for_par(df):
+    journal_df = pd.get_dummies(df['Journal'], sparse = True)
+    return journal_df
 
 def process_cols(df):
     # converts each col to one hot encoded, calls functions to get
@@ -1146,10 +1178,11 @@ def process_cols(df):
     # need a good way to get the dummies for normal cols 
     # https://towardsdatascience.com/encoding-categorical-features-21a2651a065c
     
-    pandarallel.initialize()
+    journal_df = general_multi_proc(get_dummies_for_par, df) ### this works
+    df['cited_num_sq'] = parallelize_on_rows(df['cited_num'], test_func1) # works
     
-    df['Authors_list'] = df['Authors'].parallel_apply(lambda x: str_col_to_list(x, ","))
-    df['titleID_list'] = df['titleID'].parallel_apply(lambda x: str_col_to_list(x, " "))
+    df['Authors_list'] = general_multi_proc(str_col_to_list_par, df['Authors'], " ")
+    df['titleID_list'] = df['titleID'].apply(lambda x: str_col_to_list(x, " "))
     print('did str_col_list')
     
     df['Authors_list'] = df['Authors_list'].apply(lambda x: make_lower(x))

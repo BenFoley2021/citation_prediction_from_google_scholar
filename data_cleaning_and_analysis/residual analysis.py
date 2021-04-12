@@ -19,7 +19,6 @@ from generic_func_lib import *
 
 os.getcwd()
 
-
 def putResInDf(df,resDict):
     
     df['pred'] = df['index1'].apply(lambda x: resDict[x][0])
@@ -29,21 +28,18 @@ def putResInDf(df,resDict):
     return df
 
 
-def setUp(df_to_read, res_dict_to_read):
+def setUp(df_to_read, resDict):
 
     #### importing and cleaning
     df = pd.read_csv(df_to_read)
     
-    resDict = pickle.load(open(res_dict_to_read, "rb"))
-    
+    #resDict = pickle.load(open(res_dict_to_read, "rb"))
 
-    
     # setting index as a column
     df['index1'] = df.index
-    df['index1'] = df['index1'].astype(str)
+    #df['index1'] = df['index1'].astype(str)
     ### keeping only rows that were in the test set
-    df2 = df[df['index1'].apply(lambda x: str(x) in resDict) == True] #this seems really slow
-    
+    df2 = df[df['index1'].apply(lambda x: x in resDict) == True] #this seems really slow
     
     listIds = df2['index1'].to_list()
     
@@ -85,7 +81,7 @@ def getRelativeRes(x):
         let the model predict on the raw data, and put +1 in the denominator 
     """
     
-    return (x.pred - x.actual)/min(x.pred,x.actual)
+    return (x.pred - x.actual)/(min(x.pred, x.actual) +1 )
     
 def basicHist(df2,col,xLow,xHigh,bins):
     resDist = sns.distplot(x = df2[col],bins = bins, kde = False)
@@ -95,16 +91,62 @@ def basicHist(df2,col,xLow,xHigh,bins):
     resDist.set(ylabel='count')
     resDist.set(xlabel='residual')
 
+def make_shuffle_rel_res(df):
+    """ shuffles the actual cites_per_year, then calculates the rel res as
+        was done for the preds
+    """
+    def custom_1(x):
+        return (x.actual_shuffle - x.actual)/(min(x.actual_shuffle, x.actual) +1 )
+    
+    import numpy.random
+    df['actual_shuffle'] = numpy.random.permutation(df['actual'].values)
+
+    df['shuffle_rel_res'] = df.apply(custom_1, axis =1)
+    
+    return df
+
+def compare_res_rel(df):
+    """ plots histograms of the relative residuals compared to the 
+
+    """
+    import matplotlib
+    from matplotlib import pyplot as plt
+    import seaborn as sns
+    
+    
+    plt.figure()
+    sns.distplot(x = df['relativeRes'], kde = False, label =  'relative residuals')
+    sns.distplot(x = df['shuffle_rel_res'], kde = False, label =  'shuffled residuals')
+    plt.legend()
+    
+    
+def compare_res(df):
+    
+    import matplotlib
+    from matplotlib import pyplot as plt
+    import seaborn as sns
+    
+    plt.figure()
+    sns.distplot(x = df[df['actual'] < 20]['actual'], kde = False, label =  'actual')
+    sns.distplot(x = df['pred'], kde = False, label =  'predicted')
+    plt.legend()
+    plt.xlim((0, 100))
+    
 
 if __name__ == "__main__":
     
     res_dict_to_read = load_one_pickled("resDict.pckl", "model_related_outputs")
     
-    df_list = load_all_dfs("cleaned_data")
-    df_to_read = cat_dfs(df_list)
+    df_file_name = 'data_sent_to_model.csv'
     
-    df2 = setUp(df_to_read, res_dict_to_read)
+    df2 = setUp(df_file_name, res_dict_to_read)
     df2['relativeRes'] = df2.apply(getRelativeRes, axis =1)
+
+    df2 = make_shuffle_rel_res(df2)
+    
+    compare_res_rel(df2)
+    
+    compare_res(df2)
 
 #df2 = pd.read_csv('resDF_2-26.csv')
 

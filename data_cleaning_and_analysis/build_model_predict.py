@@ -118,7 +118,7 @@ def loadFiles2(path):
     
     #return X,y, inputs, names
 
-def loadInputData2(): ### another ad hoc function to load the data for when the files needed to be split up becuase i can't upload things larger than 25 MB to github
+def loadInputData2(dirToRead): ### another ad hoc function to load the data for when the files needed to be split up becuase i can't upload things larger than 25 MB to github
     """ loads data for ML
     X = sparse matrix
     y = array of float, the citations per year
@@ -126,7 +126,7 @@ def loadInputData2(): ### another ad hoc function to load the data for when the 
     construct X
     """    
 
-    dirToRead = 'one_hot_encoded_data'
+    #dirToRead = 'one_hot_encoded_data'
     
     var_names_dict = loadPickled2(dirToRead)
     var_names_npz = loadFiles2(dirToRead)
@@ -549,6 +549,19 @@ def packagePreds(preds,keys_test,ym_test,dicMain):
     misMatchList = verifyOrder(resDict,dicMain)
         
     return resDict, misMatchList
+
+def packagePreds_v2(preds,keys_test,ym_test):
+    #puts the preds and actual into a dict with the id as the key
+            
+    resDict = {} # residuals dictionary
+    
+    for i, key in enumerate(keys_test):
+        try:
+            resDict[key] = [preds[i],ym_test[i]]
+        except:
+            print(str(i) + ' ' + key)
+        
+    return resDict
     
 def shuffle(dicMain, X, y):
     from sklearn.utils import shuffle
@@ -558,13 +571,9 @@ def shuffle(dicMain, X, y):
     dicMainKeys, X, y = shuffle(dicMainKeys, X, y, random_state=0)
     
     return dicMainKeys, X, y
-    
-if __name__ == '__main__':
-    from sklearn.metrics import mean_squared_log_error
-    from sklearn.metrics import mean_absolute_error
-    from sklearn.metrics import mean_squared_error
-    
-    var_names_dict, var_names_npz = loadInputData2()
+
+def run_for_custom_encoded():
+    var_names_dict, var_names_npz = loadInputData2('one_hot_encoded_data')
     
     print('loaded vars')
     X = var_names_npz['bowVecSparseX.npz']
@@ -588,12 +597,48 @@ if __name__ == '__main__':
     # making a dictionary of the residuals. This is loaded by the residual analysis sccript, and the
     # placed into the data frame used for one hot encoding
     resDict, misMatchList = packagePreds(preds,keys_test,ym_test,dicMain)
-
-    
-
-
     # saving resDict
     save_pickles([resDict], ["resDict"], "model_related_outputs")
+
+def run_for_encoding_v2():
+    
+    var_names_dict, var_names_npz = loadInputData2('one_hot_encoded_data_v2')
+    
+    print('loaded vars')
+    X = var_names_npz['bow_mat_X.npz']
+    y = var_names_dict['labels.pckl']
+    
+    keys = var_names_dict['paper_ids.pckl']
+    #need to get keys
+    #citedList = getListCitedBy(dicMain) i dont know what this was for
+    
+    Xm_train, Xm_test, ym_train, ym_test, keys_train, keys_test \
+    = manTTS(keys, X, y)
+    
+    xg_reg = runXGboost(X, y) # should really split model construction and training into seperate functions
+
+    # getting accuracy from test set
+    data_dmatrix = xgb.DMatrix(data=Xm_test)
+    preds = xg_reg.predict(data_dmatrix)
+
+    plt.hist(preds)
+    # making a dictionary of the residuals. This is loaded by the residual analysis sccript, and the
+    # placed into the data frame used for one hot encoding
+    resDict = packagePreds_v2(preds,keys_test,ym_test)
+    # saving resDict
+    save_pickles([resDict], ["resDict"], "model_related_outputs")
+    
+    return resDict
+
+if __name__ == '__main__':
+    from sklearn.metrics import mean_squared_log_error
+    from sklearn.metrics import mean_absolute_error
+    from sklearn.metrics import mean_squared_error
+    
+
+    resDict = run_for_encoding_v2()
+    # saving resDict
+
 
 
     # shuffling
