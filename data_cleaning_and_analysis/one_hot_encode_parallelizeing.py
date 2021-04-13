@@ -7,12 +7,17 @@ df operations
 
 currently on TypeError: string indices must be integers
 
+multilabelbinarizer with dask
+https://stackoverflow.com/questions/55487880/achieve-affect-of-sklearns-multilabelbinarizer-with-dask-dataframe-map-partitio
+
+The parrallizing works ok for apply. its actually slower for the one hot encoding using the 
+multilabel binarizer
 
 @author: Ben Foley
 """
 
 import pandas as pd
-import spacy
+#import spacy
 import numpy as np
 import time
 import scipy.sparse
@@ -24,7 +29,7 @@ import math
 import multiprocessing
 from multiprocessing import Pool
 from functools import partial
-        
+import os
 def getTok2(dfIn, col, col_2_write):
     """ Using spacy to get the tokens from the title
     """
@@ -44,60 +49,6 @@ def getTok2(dfIn, col, col_2_write):
         tokens.append(tempList)
     dfIn[col_2_write] = tokens
     return dfIn
-
-def updateBowDict(tokens,dicBow):
-    ##### processing words
-    ##### update dict with dic[word] = 0
-    #tokens = processTxt(textIn)
-    for tok in tokens:
-        if tok not in dicBow:
-            dicBow[tok] = 0
-            
-        elif tok in dicBow:
-            dicBow[tok] = dicBow[tok] + 1
-            #print(dicBow[tok])
-    return dicBow
-    
-def setUpBow2(dfIn, extraWords):  #### adding the extra words to the list after the fact
-    # transfering data in the df to dictionary formatt, getting tokens or lemma of the title
-    # adding other info like year published and category to the tokens
-    dicBow = {} ##### the dictionary storing the words for the BOW
-    dicMain = {} #### dictionary with the row (or paper) id as the key, times cited, tokens, and number of tokens to be actually used in the model as values
-    print('starting on getting toks')
-    dfIn = getTok2(dfIn, 'titleID', 'tokens')  ##### getting tokens (or lemma) and adding the list as a new col in the df. # this is fairly slow
-    print('got tokens')
-
-    def get_toks_from_non_title_cols(x):
-        #### adds to the list of toks in the tokens column
-        ### extra info not in the title is added so it can be used in the bag of words
-        tempList= []
-        for col in extraWords:
-            if col == 'Authors':
-                tempList = tempList + x[col].split(',')
-            else:
-                if type([x[col]]) == str:
-                    x[col] = x[col].lower()
-                tempList = tempList +  [x[col]]
-                
-        return x['tokens'] +  tempList
-
-    def iter_df_make_bow_and_main(dfIn, dicBow, dicMain):
-        for i,row in dfIn.iterrows(): ###### looping through the dataframe (now with tokens/lemma) and building the dictionaries
-            if i%2000 == 0:
-                print(i)
-            
-            dicBow = updateBowDict(row['tokens'],dicBow)  #### update the bag of words dictionary 
-            ##### add the extraWords in here
-        
-            ### updating the dict with row id, tokens, and cited by info
-            dicMain[str(i)] = [row['cites_per_year'],row['tokens'],0]#### the zero will be updated with the word count for that ids later
-
-        return dicBow, dicMain
-
-    dfIn['tokens'] = dfIn.apply(get_toks_from_non_title_cols, axis=1)
-    dicBow, dicMain = iter_df_make_bow_and_main(dfIn, dicBow, dicMain)
-
-    return dicBow, dicMain                                 
 
 def removeFromDict(removeSet,dicIn): #### removes things add hoc from the dictionary
     #my_dict.pop('key', None) https://stackoverflow.com/questions/11277432/how-can-i-remove-a-key-from-a-python-dictionary
@@ -195,170 +146,6 @@ def remTok(bowDic,set2Rem): ### i guess theres another ad hoc function to remove
             pass
     return bowDic
 
-def popBow(dicBow: dict, dicMain: dict, intermediate_dict: dict): ####### this is the main loop which contructs the one hot encoded matrix for input to
-    """ constructs the one hot endoded input
-    """
-
-    def make_word_to_vec_and_toks_per_paper():
-        """ making a dictionary which converts tokens to the position in the 
-            vector. Also making a copy of dicBow which keeps track of which papers
-            are using which tokens. 
-        """
-        dicWordPaper = dicBow.copy()  #### the keys are the words, values list of paper ids
-        dicWord2Vec = {} ### keeps track of which word corresponds to which col in bowVec
-        for i,key in enumerate(dicBow): 
-            dicWord2Vec[key] = i #putting the location of each word into the dict
-            dicWordPaper[key] = [] ### changing the value to emptylists
-        
-        return dicWord2Vec, dicWordPaper
-
-    def loop_tokens(key, dicMain, dicWordPaper, wordVec):
-        """ loops through the tokens contained in each item of dicMain
-        """
-        tempSet = set()
-        dicBowTemp = dicBow.copy() ### getting copy of the bow and setting all keys to zero, will use this to count words for the current row
-        dicBowTemp = dict.fromkeys(dicBowTemp, 0) #setting all keys to 0 https://stackoverflow.com/questions/13712229/simultaneously-replacing-all-values-of-a-dictionary-to-zero-python
-            
-        for tok in dicMain[key][1]: ### looping through the tokens stored in dicMain
-            #### need to check if the tok is in the intermediate dictionary
-            # if this token got merged with another one (e.g. batteries -> battery)
-            # then we change the tok to its base (lemma, root, whatever), as thats 
-            # what will be in dicBow
-            if tok in intermediate_dict: # intermediate_dict is the hashmap made by build custom lookup table
-                tok = intermediate_dict[tok]
-        
-            if tok in dicBowTemp:
-                dicBowTemp[tok] = dicBowTemp[tok] + 1 #### #times the word is present
-                dicWordPaper[tok].append(key)  ###### adding the id of the paper which has that word
-                tempSet.add(tok) ###adding the token to a set which will be used to update the sparse array later
-                dicMain[key][2] = dicMain[key][2] + 1 #### keeping track of how many words from this ids are still going to be used
-
-        return dicMain, dicBowTemp, dicWordPaper, tempSet
-
-    def update_bowVec(tempSet, dicWord2Vec, bowVec, dicBowTemp, indi):
-        
-        for item in tempSet:  ### looping through the tokens encountered for this row (paper) and updating the one hot encoding 
-            indj = dicWord2Vec[item] ## getting the index (or column in the sparse matrix)
-            try: #### at one point I was having trouble with indexing, so that's why its a try block
-                bowVec[indi,indj] = dicBowTemp[item]
-                if dicBowTemp[item] < 0:
-                    print('warning! negative word count in dicBowTemp')
-                if bowVec[indi,indj] < 0:
-                    print('waring! negative word count in bowVec')
-            except:
-                print(str(indi) + ' ' + str(indj))
-
-        return bowVec
-
-    def loop_dicMain(dicMain, bowVec, dicWordPaper):
-        """ loops through the main dictionary
-        """
-        
-        indi = -1
-        for key in dicMain: # loop used to populate bowVec, as well update dicMain with the number of factors for each row (paper) that are being used in the model
-            indi = indi +1
-            label.append(dicMain[key][0]) # label is the number of citations, what I will try to predict later
-            dicMain, dicBowTemp, dicWordPaper, tempSet = loop_tokens(key, dicMain, dicWordPaper, wordVec)
-            bowVec = update_bowVec(tempSet, dicWord2Vec, bowVec, dicBowTemp, indi)
-
-        return label, bowVec, dicWord2Vec, dicWordPaper
-
-    # main function script, declaring variables 
-    label = [] #### label is the number of citations, what I will try to predict later
-    bowVec = lil_matrix((len(dicMain), len(dicBow)), dtype=np.int8) ## this will hold the one hot encoded bow    
-    wordVec = np.zeros(len(dicBow))  ### is the same length as the num of words in the bow
-    
-    dicWord2Vec, dicWordPaper = make_word_to_vec_and_toks_per_paper()
-    
-    label, bowVec, dicWord2Vec, dicWordPaper = loop_dicMain(dicMain, bowVec, dicWordPaper)
-
-    return label, bowVec, dicWord2Vec, dicWordPaper  #### dicWordPaper is obsolete in this version
-
-def analyzeFreq(dicIn):   
-    ## this is also obsolete now
-    
-    tempDic = dicIn.copy()
-    tempList= []
-    #empty df with cols
-    #https://www.kite.com/python/answers/how-to-create-an-empty-dataframe-with-column-names-in-python#:~:text=Use%20pandas.,an%20empty%20DataFrame%20with%20column_names%20.
-    
-    column_names = ["word", "count", "ids"]
-    tempdf = pd.DataFrame(columns = column_names)
-    
-    
-    for key in dicIn:
-        tempDic[key] = len(dicIn[key])
-        tempList.append(len(dicIn[key]))
-        
-        
-        
-    return tempDic,tempList
-
-def histList(listIn): #makes histogram of list
-    import numpy as np
-    # import random
-    from matplotlib import pyplot as plt
-    
-    # data = np.random.normal(0, 20, 1000) 
-    
-    # fixed bin size
-    bins = np.arange(1, 100, 2) # fixed bin size
-    
-    plt.xlim([min(listIn)-5, max(listIn)+5])
-    
-    plt.hist(listIn, bins=bins, alpha=0.5)
-    plt.title('Random Gaussian data (fixed bin size)')
-    plt.xlabel('variable X (bin size = 5)')
-    plt.ylabel('count')
-    
-    plt.show()
-    
-def trimBow2(bowDic,thresh):  ### removes words from bag of words if they present in less than thresh rows (papers)
-    tempDic = {}
-    for key in bowDic:
-        if bowDic[key] > thresh:
-            #bowDic.pop(key,None)
-            tempDic[key] = bowDic[key]
-            
-    return tempDic
-
-def trimBow3(bowDic,authorSet,journalSet,thresh,threshAuthor,threshJournal):  ### removes words from bag of words if they present in less than thresh rows (papers)
-    """ need to apply different thresholds to different groups
-        The theshold changes depending on which group the key belongs to
-        
-    """
-    tempDic = {}
-    for key in bowDic:
-        tempThresh = thresh
-        if key in authorSet:
-            tempThresh = threshAuthor
-        elif key in journalSet:
-            tempThresh = threshJournal
-            
-        if bowDic[key] > tempThresh:
-            #bowDic.pop(key,None)
-            tempDic[key] = bowDic[key]
-            
-    return tempDic
-
-def wordCount(curBowDic,mainDic): #### i think this is also obsolete now
-    #checks to see how many of the words for each paper are in the current bow dic.
-    # need to know if have eliminated all or most words from anything
-    
-    tempDic = mainDic.copy()
-    
-    for key in mainDic:
-        #print(key)
-        count = 0
-        for tok in mainDic[key][1]:
-            if tok in curBowDic:
-                count = count +1
-        
-        
-        tempDic[key] = [mainDic[key][0],mainDic[key][1],count]
-            
-    return tempDic
-
 def saveOutput2(fListIn,NListIn,outLoc):
         ###pickles the outfile and saves it to a dir
     import pickle
@@ -375,29 +162,6 @@ def saveOutput2(fListIn,NListIn,outLoc):
         with open(path, 'wb') as f:  # Python 3: open(..., 'wb')
             pickle.dump(vars2Save[i], f)
         f.close()
-
-def prepToks(dfIn,extraWords):
-    #adds the extra words to the title page
-    #https://stackoverflow.com/questions/13331698/how-to-apply-a-function-to-two-columns-of-pandas-dataframe
-    
-    def custom1(x):
-        tempStr = str()
-        for col in extraWords:
-            if col == 'cat':
-                tempList = x[col].split(' ')
-                for thing in tempList:
-                    tempStr = tempStr + ' ' + str(thing)
-                
-            elif col =='year':
-                
-                tempStr = tempStr + ' ' +  x[col]
-        
-        return x['title'] + ' ' + tempStr
-    
-    df['title'] = df.apply(custom1, axis=1)
-    
-    return df
-
             
 def dropCust1(dfIn):
     ### removes the rows for which 'cited' cant be converted to an int
@@ -672,27 +436,6 @@ def buildCustomLookup2(dicBow):
         
     return lookUpDict
 
-def condenseDicBow(dicBow,customLookUpDict):
-    """ converts tokens which were decided to have a root into that root.
-        eg. batteries -> battery
-        
-    PARAMS
-        dicBow: dict. The keys all tokens to be used in the one hot encoded model. 
-                        The values are the number of times that token has been used
-        customLookUpDict: dict. Maps tokens to their root, such as a key of "batteries"
-                            with a value of "battery".
-    """
-    
-    for key in customLookUpDict:
-        if key in dicBow:
-            try:
-                dicBow[customLookUpDict[key]] += dicBow[key] # since we are combing the tokens, also need to combine the number of times it's present
-                dicBow.pop(key) # remove the key. (eg batteries is merged with battery, then the batteries key removed)
-            except:
-                print('couldnt find ' + key)
-
-    return dicBow
-
 def removeBadScrap(dfIn):
     
     def customRemBad(x):
@@ -706,265 +449,6 @@ def removeBadScrap(dfIn):
     dfIn = df[dfIn['ids'].apply(lambda x: customRemBad(x)) == True]
                      
     return dfIn
-
-def compositionOfDicBow(dicBow,authorSet,journalSet):
-    """ figuring out which source is contributing how many factors to dicBow
-        right now we just the tokens form the title, the authors, and journals
-    
-
-    Parameters
-    ----------
-    dicBow : TYPE
-        DESCRIPTION.
-    authorSet : TYPE
-        DESCRIPTION.
-    journalSet : TYPE
-        DESCRIPTION.
-
-    Returns
-    -------
-    None.
-
-    """
-
-    outDict = {}
-    authorCount = 0
-    journalCount = 0
-    otherCount = 0
-    
-    for key in dicBow:
-        if key in authorSet:
-            authorCount += 1
-        elif key in journalSet:
-            journalCount += 1
-        else:
-            otherCount += 1
-            
-    outDict['author'] = authorCount
-    outDict['journal'] = journalCount
-    outDict['other'] = otherCount
-    
-    return outDict
-
-def predictOne(MLinput):
-    """ return 
-    """
-    import keras
-    import os 
-    
-    model = keras.models.load_model(os.getcwd()) #### probably want to load the model in flask,
-    # dont want to load it everytime need to predict
-    
-    return model.predict(MLinput)
-
-def words2ModelInput(inputDict, dicWord2Vec):
-    """ converting a list of words to input for model
-    
-    """
-    import spacy
-    nlp = spacy.load('en_core_web_sm')
-    
-    X = np.zeros(len(dicBow))
-    
-    tokens = []
-    factUsed = []
-    
-    tokens = ([token.lemma_ for token in nlp(inputDict['title']) if not token.is_stop])
-    
-    for thing in inputDict['otherFactor']:
-        tokens.append(thing)
-    
-    
-    for word in tokens:
-        #word = word.strip().lower()
-        #print(word)
-        if word in dicWord2Vec:
-            X[dicWord2Vec[word]] += 1
-            factUsed.append(word)
-    return X, factUsed
-
-def clean_authors(df):
-    """ currently: this is more work than I realized, not sure if it's work doing
-        until have more results from the intial fits. should try other less, less adhoc 
-        methods of dimensionality reduction before investing more time here (note on 4/1)
-    
-        It's common that authors are listed with both full name and initials. would like
-        to combine these.
-        
-        strategy: if we take the data scrapped from one author, it's not likely that
-                there will be cases where authors have the same or same initials. So if 
-                map initials back to the author they likely came from only with the set
-                of papers for each author scrapped, should be able to expand the author
-                abbreviatinos into full name if present
-                
-        implementation:
-            define allowed transformations
-                initial can be expanded into full name if
-                    * + lastName = firstName + lastName
-                    * + ^ + lastName = firstName + middleName + lastName
-                    
-                * = any from list of all first names 
-                ^ = from list of all middle names
-
-            single letter = initial, try and sub *
-            single letter + "." = initial, try and sub *
-            double letter = initials, try and sub * + ' ' + ^
-            
-            split df into groups of authors scrapped
-            for each of those, get lists of authors
-            
-            go through each author, if the authors name has initials,
-            make an entry with the generic character 
-        
-            if there are multiple things it could be, we want to add that group
-            (name with initials and full names that it could be) to a list of authors
-            which we can't resolve. 
-        
-    """
-    
-
-
-    def custom_name_clean(x):
-        # break authors in list, make lower, strip, recombine into str seperated
-        # by commas
-        x_list = x.split(",")
-        y = str()
-        for name in x_list:
-            name = name.lower().strip()
-            y += name + ","
-        
-        return y
-    
-    def custom_replace_name(x):
-        # this was meat to be the .apply or lambda for replacing the authors
-        # in the actual df, haven't done it yet
-        return x
-    
-    def map_initials_to_names(df_temp):
-        # for now we are just dealing with the case where theres a first,
-        # maybe middle, and last name.
-        def update_dict(dictIn, key, value):
-            if key in dictIn:
-                dictIn[key].add(str(value))
-            else:
-                dictIn[key] = set()
-                dictIn[key].add(str(value))
-            return dictIn
-        
-        def make_name_sets():
-            """ loops through the authors of each paper makes lists of first,
-                middle, last names as well as any that seem to be abbrievations
-                
-                A dictionary with names with abbreiations where the abbreiations
-                are converted to wildwards is returned, along with dictionaries 
-                with the wildcard-ized version of each first and middle name
-                
-                based somewhat on the word ladder type problems
-            """
-            
-            first_names = {}
-            middle_names = {}
-            last_names = {}
-            all_names = {}
-            name_to_generic = {}
-            names_to_title = {}
-            for _, row in df_temp.iterrows():
-                for name in row['Authors'].split(","):
-                    num_words = len(name.split(" "))
-                    words = name.split(" ")
-                    temp_name_to_generic = {}
-                    if len(words) == 2 or len(words) == 3: 
-                        all_names.update({name: 1})
-                        for i, word in enumerate(words):
-                            # this isn't a very good way to do this
-                            # could do:
-                            # for each thing try transform. return transformed thing
-                                # or thing if no transform
-                            # add all things back into name, if no transforms done
-                            # don't put it in the generic_to_name dict.
-                            # the if structure is really hard to follow
-                            
-                            
-                            if i == 0:
-                                if len(word) > 2: # its a word not an abbrievation.
-                                    update_dict(first_names, (word[0] + "*"), word)
-                                elif len(word) == 1:
-                                    temp_name_to_generic[name] = word + "*" + " "
-                                elif len(word) == 2 and word[1] == ".":
-                                    temp_name_to_generic[name] = word[0] + "*" + " "
-
-                            elif i == 1 and num_words == 3:
-                                if len(word) > 2: # its a word not an abbrievation.
-                                    update_dict(middle_names, word[0] + "*", word)
-                                elif len(word) == 1:
-                                    temp_name_to_generic[name] += word + "*" + " "
-                                elif len(word) == 2 and word[1] == ".":
-                                    temp_name_to_generic[name] += word[0] + "*" + " "
-                                
-                            elif (i == 2 and num_words == 3) or (i == 1 and num_words == 2):
-                                if len(word) > 2:
-                                    last_names.update({word: 1})
-                                    if bool(temp_name_to_generic) == True:
-                                        temp_name_to_generic[name] += word
-                                    
-                    name_to_generic.update(temp_name_to_generic)
-                    if bool(temp_name_to_generic) == True: # if this name had abbrievations, add it so we how to look at that paper to try and resolve the abbreivation
-                        names_to_title.update({name: row['titleID']})
-            generic_to_name = {v: k for k, v in name_to_generic.items()}
-            
-            return all_names, first_names, middle_names, last_names, name_to_generic, \
-                generic_to_name, names_to_title
-
-        def get_possible_names(abrv_name):
-            """ gets all possible names based on the options for the * characters
-            """
-            pos_first_names = None 
-            pos_middle_names = None 
-            pos_names = []
-            if abrv_name.split(" ")[0] in first_names:
-                pos_first_names = first_names[abrv_name.split(" ")[0]]
-            if len(abrv_name.split(" ")) == 3 and abrv_name.split(" ")[1] \
-                in middle_names:
-                pos_middle_names = middle_names[abrv_name.split(" ")[1]]
-    
-            # now loop through all the possible combinations. can't break when find, cause
-            # need to see if there's more than 1
-            if pos_first_names:
-                for f_name in pos_first_names:
-                    if pos_middle_names:
-                        for m_name in pos_middle_names:
-                            pos_names.append(f_name + " " + m_name + " " + \
-                                             abrv_name.split(" ")[2])
-                    else:
-                        pos_names.append(f_name + " " + abrv_name.split(" ")[1])
-                    
-            return pos_names
-
-        all_names, first_names, middle_names, last_names, name_to_generic, generic_to_name, \
-            names_to_title = make_name_sets()
-    
-        # loop through the generic_to_names (or names_to_generic) and see if the abbreviations match any of the other full names
-        abrv_names_to_full = {} 
-        for abrv_name in generic_to_name:
-            pos_names = get_possible_names(abrv_name)
-            for pos_name in pos_names:
-                if pos_name in all_names:
-                    abrv_names_to_full = update_dict(abrv_names_to_full, abrv_name, pos_name)
-    
-    
-        return abrv_names_to_full
-    
-    df['Authors'] = df['Authors'].apply(custom_name_clean)
-    scrape_authors = df['scrap_auth_id'].unique()
-    
-    for author in scrape_authors:
-        df_temp = df[df['scrap_auth_id'] == author]
-        abrv_names_to_full = map_initials_to_names(df_temp)
-        
-        
-        #updated_authors = map_initials_to_names(df_temp)
-    
-    return df
 
 def sparse_dummies(df, column):
     """Returns sparse OHE matrix for the column of the dataframe"""
@@ -1010,20 +494,28 @@ def get_all_cat(df_col: pd.Series):
         
     return all_cats_set
 
-def one_hot_encode(x, cats_to_use):
+def one_hot_encode(df_col, cats_to_use: set):
+    # this doesn't work right now
     # one hot encodes the column  https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.OneHotEncoder.html
-    from sklearn.preprocessing import OneHotEncoder
-    enc = OneHotEncoder(handle_unknown='ignore', categories = list(cats_to_use))
-    
-    enc.fit(temp)
-    
-    return None
 
-def one_hot_encode_col(df_col, cats_to_use: set):
+    from sklearn.preprocessing import LabelBinarizer
+    if len(cats_to_use) != 1:
+        lb = LabelBinarizer(classes = list(cats_to_use))
+    else: lb = LabelBinarizer()
+
+    output = pd.DataFrame.sparse.from_spmatrix(
+                lb.fit_transform(df_col),
+                index=df_col.index,
+                columns=lb.classes_)
+    
+    return output
+
+def one_hot_encode_multi(cats_to_use: set, df_col):
     """ df(col) -> sparse df
             # this works but its also really slow
          #https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.MultiLabelBinarizer.html
 
+         # running this in parallel makes it much slower
     Parameters
     ----------
     df : pd.DataFrame
@@ -1041,40 +533,24 @@ def one_hot_encode_col(df_col, cats_to_use: set):
     """
     
     from sklearn.preprocessing import MultiLabelBinarizer 
-
     mlb = MultiLabelBinarizer(sparse_output=True, classes = list(cats_to_use))
-    
 
     output = pd.DataFrame.sparse.from_spmatrix(
                 mlb.fit_transform(df_col),
-                index=df.index,
+                index=df_col.index,
                 columns=mlb.classes_)
-    
-    
-    #df = df.join(
-    #            pd.DataFrame.sparse.from_spmatrix(
-    #                mlb.fit_transform(df.pop(col)),
-    #                index=df.index,
-    #                columns=mlb.classes_))
     
     return output
 
-
-def one_hot_encode_for_col(df_col, cats_to_use):
-    # one hot encodes the column  https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.OneHotEncoder.html
-    # https://stackoverflow.com/questions/45312377/how-to-one-hot-encode-from-a-pandas-column-containing-a-list
-    
-    from sklearn.preprocessing import OneHotEncoder
-    enc = OneHotEncoder(handle_unknown='ignore', categories = list(cats_to_use))
-    df_col_list= df_col.to_list()
-    enc.fit(df_col_list)
-    
-    return None
 
 def str_col_to_list(x, splitter): # meant to be used with apply or lambda function
 
     return [y for y in x.split(splitter)]
     
+def merge_synonym_par(synonyms: dict, df_col: pd.Series):
+    
+    return df_col.apply(lambda x: merge_synonym(x, synonyms))
+
 def merge_synonym(x: list, synonyms: dict):
     #meant to be called by a lambda function
     
@@ -1097,21 +573,12 @@ def remove_synonym(setIn: set, synonyms: dict):
     return setIn
 
 def make_lower(x):
-    
     return [y.lower() for y in x]
 
 def threshold_sparse_df(dfIn, threshold):
     #need to drop columns with less then threshold counts
     return dfIn.drop(dfIn.columns[dfIn.apply(lambda col: col.sum() < threshold)], axis=1)
-
-def str_col_to_list_par(df_col, splitter): # meant to be used with apply or lambda function
-    def custom(x, splitter):
-        return [y for y in x.split(splitter)]
-    
-    df_col = df_col.apply(lambda x: custom(x, splitter))
                           
-    return df_col
-
 #############3
 def parallelize(data, func, num_of_processes=4):
     """ func is the partial function
@@ -1132,13 +599,17 @@ def run_on_subset_mod(func, data_subset):
 def parallelize_on_rows(data, func, num_of_processes=4):
     return parallelize(data, partial(run_on_subset_mod, func), num_of_processes)
 #################
-
+def str_col_to_list_par(splitter, df_col): # meant to be used with apply or lambda function
+    def custom(x, splitter):
+        return [y for y in x.split(splitter)]
+    
+    return df_col.apply(lambda x: custom(x, splitter))
 #### 
 def general_multi_proc(func, interable, *args):
     """ func is the function we want to run, interable is the thing (usually
         a df or array) that we want to split up and run the function on in
         parrallel, *args are additional arguments that need to be passed to 
-        func
+        func.
     
     Parameters
     ----------
@@ -1154,165 +625,160 @@ def general_multi_proc(func, interable, *args):
 
     """
     
-    print(*args)
+    def recombine(output: list):
+        """ process the output to desired format
+            e.g. list of series -> 1 series
+            list of dfs -> 1 df
+            list of sets combined into 1 set
+
+        Parameters
+        ----------
+        output : List
+            list of the outputs from parrallel compution to be recombined.
+
+        Returns
+        -------
+        recombined_output: iteritable, variable data types
+            The output list recombined (eg pd.concat) to a single variable.
+            The data types currently supported are in the if strucutre. If none 
+            of these, the output is the input list. 
+
+        """
+        if type(output[0]) == pd.DataFrame or type(output[0]) == pd.Series:
+            recombined_output = pd.concat(output)
+            
+        elif type(output[0]) == set:
+            recombined_output = set.union(*output)
+            
+        else: recombined_output = output
+        
+        return recombined_output
+    
+    
+    #print(*args)
     fp = partial(func, *args)
     data_split = np.array_split(interable, multiprocessing.cpu_count())
     process_pool = multiprocessing.Pool(multiprocessing.cpu_count())
-    output = process_pool.map(fp, data_split)
-    print(output)
+    output = process_pool.map(fp, data_split) 
+    
+    process_pool.close()
+    process_pool.join()
+    
+    return recombine(output)
 
 
 def test_func1(x):
-    return x**2
+    return x**x
 
-def get_dummies_for_par(df):
+def get_dummies_for_par(cats_to_use, df):
     journal_df = pd.get_dummies(df['Journal'], sparse = True)
     return journal_df
 
-def process_cols(df):
+def clean_journal(x):
+    """ removes all numeric characters from the journal string
+        There are a lot of 17th annual..... or arxiv:73648742
+    """
+    y = str()
+    for char in x:
+        if char.isdigit() == False:
+            y += char
+    return y
+
+def process_cols(df, svd = False):
     # converts each col to one hot encoded, calls functions to get
     # all the cats, clean cats, and finally uses the set of cats for each
     # col to get sparse mats. 
+    def process_title(df):
+        df['titleID_list'] = general_multi_proc(str_col_to_list_par, df['titleID'], " ")
+        df['titleID_list'] = parallelize_on_rows(df['titleID_list'], make_lower)
+        title_words = general_multi_proc(get_all_cat, df['titleID_list'])
+        synonyms = buildCustomLookup(title_words)
+        title_words = remove_synonym(title_words, synonyms)
+        df['titleID_list2'] = general_multi_proc(merge_synonym_par, df['titleID_list'], \
+                                             synonyms)
+        title_words_df = one_hot_encode_multi(title_words, df['titleID_list2'])
+        title_words_df = threshold_sparse_df(title_words_df, 10)
+        return title_words_df
     
+    def process_authors(df):
     
-    # need a good way to get the dummies for normal cols 
-    # https://towardsdatascience.com/encoding-categorical-features-21a2651a065c
+        df['Authors_list'] = general_multi_proc(str_col_to_list_par, df['Authors'], ",")
+        df['Authors_list'] = parallelize_on_rows(df['Authors_list'], make_lower)
+        authors = general_multi_proc(get_all_cat, df['Authors_list'])
+        author_df = one_hot_encode_multi(authors, df['Authors_list'])
+        author_df = threshold_sparse_df(author_df, 5)
     
-    journal_df = general_multi_proc(get_dummies_for_par, df) ### this works
-    df['cited_num_sq'] = parallelize_on_rows(df['cited_num'], test_func1) # works
+        return author_df
     
-    df['Authors_list'] = general_multi_proc(str_col_to_list_par, df['Authors'], " ")
-    df['titleID_list'] = df['titleID'].apply(lambda x: str_col_to_list(x, " "))
-    print('did str_col_list')
-    
-    df['Authors_list'] = df['Authors_list'].apply(lambda x: make_lower(x))
-    df['titleID_list'] = df['titleID_list'].apply(lambda x: make_lower(x))
-    print('made lower')
-    # getting catagories
-    authors = get_all_cat(df['Authors_list'])
-    print('got cat authors')
-    title_words = get_all_cat(df['titleID_list'])
-    print('got cat title')
+    def process_journals(df):
+        temp = set(['a'])
+        #journal_df = one_hot_encode(df['Journal'], temp) doesn't work
+        journal_df = pd.get_dummies(df['Journal'], sparse = True)
+        print('got dummies journal')
+        journal_df = threshold_sparse_df(journal_df, 5)
+        return journal_df
 
-    # getting synonyms from title words
-    synonyms = buildCustomLookup(title_words)
-    print('built synonyms dict')
-    # consolidating synomyms
-    df['titleID_list2'] = df['titleID_list'].apply(lambda x: \
-                                                   merge_synonym(x, synonyms))
-    print('merged syns title')
-    title_words = remove_synonym(title_words, synonyms)
+    def do_svd(sparse_df):
+        from sklearn.decomposition import TruncatedSVD
+        svd = TruncatedSVD(50)
         
-    title_words_df = one_hot_encode_col(df['titleID_list2'], title_words) # this is a sparse df
-    print('encoded title')
-    title_words_df2 = threshold_sparse_df(title_words_df, 10)
+        sparse_mat = sparse_df.sparse.to_coo()
+        X_svd = svd.fit_transform(sparse_mat)
+        
+        return X_svd
     
-    journal_df = pd.get_dummies(df['Journal'], sparse = True)
-    print('got dummies journal')
-    journal_df = threshold_sparse_df(journal_df, 5)
-    
-    author_df = one_hot_encode_col(df['Authors_list'], authors)
-    author_df = threshold_sparse_df(journal_df, 5)
-    print('encoded authors')
-    sparse_df = title_words_df2.join(journal_df, lsuffix='_left', rsuffix='_right')
-    
-    sparse_df = sparse_df.join(author_df, lsuffix='_left', rsuffix='_right')
 
+    def save_outputs(svd):
+        
+        labels = df['cites_per_year'].to_numpy()
+        paper_ids = sparse_df.index.to_list()
+        outLoc = 'one_hot_encoded_data_v2'
+        
+        if svd == False:
+            col_names = sparse_df.columns.to_list()
+            bow_mat_X = sparse_df.sparse.to_coo()
+            bow_mat_X = bow_mat_X.tocsc()
+            fList = [col_names, labels, paper_ids]
+            nList = ["col_names", "labels", "paper_ids"]
+            path = outLoc + '//' + 'bow_mat_X.npz'  
+            scipy.sparse.save_npz(path, bow_mat_X)
+        
+        else:
+            fList = [X_svd, labels, paper_ids]
+            nList = ["X_svd", "labels", "paper_ids"]
+        
+        saveOutput2(fList,nList,outLoc) 
+        return None
+
+
+
+
+    sparse_df = process_title(df).join(process_journals(df), lsuffix='_left', rsuffix='_right')
+    sparse_df = sparse_df.join(process_authors(df), lsuffix='_left', rsuffix='_right')
     # converting to sparse 
 
-    col_names = sparse_df.columns.to_list()
+    if svd == True:
+        X_svd = do_svd(sparse_df)
 
-    bow_mat_X = sparse_df.sparse.to_coo()
+    save_outputs()
 
-    bow_mat_X = bow_mat_X.tocsc()
+    return None
     
-    # need labels
-    labels = df['cites_per_year'].to_numpy()
-    paper_ids = sparse_df.index.to_list()
-    
-    
-    outLoc = 'one_hot_encoded_data_v2'
-
-    fList = [col_names, labels, paper_ids]
-    nList = ["col_names", "labels", "paper_ids"]
-
-    saveOutput2(fList,nList,outLoc)  ###### saving variables in the list with the desired names
-    
-    path = outLoc + '//' + 'bow_mat_X.npz'  
-    scipy.sparse.save_npz(path, bow_mat_X)  ##### saving the sparse matrix
-
-    df.to_csv('data_sent_to_model.csv')
-
-    return title_words_df2
-    
-def custom_encoder(df, categorical_features):
-    
-    nlp = spacy.load('en_core_web_sm')
-    spacy_stopwords = spacy.lang.en.stop_words.STOP_WORDS
-    customize_stop_words = ['-','Single']  ##### adding custom stopwords
-    for w in customize_stop_words:
-        nlp.vocab[w].is_stop = True
-
-    extraWords = ['year','Authors','Journal'] ####### cols from the df to be added to the bow
-    toks2Rem = ['\n  ','--',"",',',"\to","..."] # if we seem these tokens get rid of them
-    symbol2Rem = set(['%','$','{','}',"^","/", "\\",'#','*',"'",\
-                  "''", '_','(',')', '..',"+",'-',']','[']) # remove 
-    
-    start = time.time()
-    dicBow,dicMain = setUpBow2(df,categorical_features) ### get initial data
-    end = time.time()### it doesn't look like I acutally use tok set
-    
-    setUpBow1 = end - start
-    ####################
-    dicBow = customProcTok(dicBow,symbol2Rem) #### this isn't working right
-    print('did customProcTok')
-
-    print('trimmed bow')
-    ###############
-    toks2Rem = ['\n  ','--',"",',',"\to","...","the", "what", "that", "then", \
-                "and", "for", "couldnt find", "from", 'with', "non", "in", "of"]
-    dicBow = remTok(dicBow,toks2Rem)
-    ############### work on this later once we have more words
-    #dicBow = customLookUpSpacy(dicBow)
-    word_to_root = buildCustomLookup(dicBow)
-    
-    start = time.time()
-    print('starting popBow')
-    """ this is also for later
-    """
-    #labelY,bowVecY,dicWord2Vec,dicWordPaper = popBow(dicBow,futureDict)
-    
-    thresh = 10
-    dicBow = trimBow2(dicBow, thresh)
-    
-    labelX,bowVecX,dicWord2Vec,dicWordPaper = popBow(dicBow,dicMain, word_to_root)
-    
-    print('finished pop Bow')
-    end = time.time()
-    popBow1 = end - start
-        
-    outLoc = 'one_hot_encoded_data'
-
-    fList = [dicBow,dicMain,labelX,dicWord2Vec]
-    nList = ['dicBow','dicMain','labelX', 'zDic2WordVec']
-
-    saveOutput2(fList,nList,outLoc)  ###### saving variables in the list with the desired names
-    
-    ############### converting bowvec to csc and saving it
-    bowVecX = bowVecX.tocsc()
-    path = outLoc + '/' + 'bowVecSparseX.npz'  
-    scipy.sparse.save_npz(path, bowVecX)  ##### saving the sparse matrix
-    
-    return dicBow, dicMain
 
 if __name__ == "__main__":
     ############ load the data, keeping the ids col as a str
-    df_list = load_all_dfs("cleaned_data")
+    #df_list = load_all_dfs("cleaned_data")
     
     # # for testing we want this to run fast
-    df_list = df_list[0:1]
+    #df_list = df_list[0:1]
     
-    df = cat_dfs(df_list)
+    #df = cat_dfs(df_list)
+    
+    file_name = "df_for_results__27-03-2021 19_27_54.csv"
+    cwd = os.getcwd()
+    path = cwd + "\\cleaned_data\\"
+    df = pd.read_csv(path + file_name)
+    
     
     #df = pd.read_csv("cleaned_data//df_for_results__28-03-2021 10_02_35.csv")
     #df = df.iloc[0:10000]
@@ -1326,91 +792,10 @@ if __name__ == "__main__":
     df.reset_index()
     categorical_features = ['year','Authors','Journal']
     
-    sparse_df = process_cols(df)
+    
+    process_cols(df, svd = True)
     
     #dicBow, dicMain = ustom_encoder(df, categorical_features)
     
-    matrices = []
-    all_column_names = []
-    # creates a matrix per categorical feature
-    for c in categorical_features: #    https://www.kaggle.com/alexandrnikitin/efficient-xgboost-on-sparse-matrices
-
-        matrix, column_names = sparse_dummies(df, c)
-        matrices.append(matrix)
-        all_column_names.append(column_names)
-    
 
 
-    train_sparse = hstack(matrices, format="csr")
-    feature_names = np.concatenate(all_column_names)
-    del matrices, all_column_names
-
-
-
-    #clean_authors(df)
-    ### loading spacy library and stopwords
-    nlp = spacy.load('en_core_web_sm')
-    spacy_stopwords = spacy.lang.en.stop_words.STOP_WORDS
-    customize_stop_words = ['-','Single']  ##### adding custom stopwords
-    for w in customize_stop_words:
-        nlp.vocab[w].is_stop = True
-
-    extraWords = ['year','Authors','Journal'] ####### cols from the df to be added to the bow
-    toks2Rem = ['\n  ','--',"",',',"\to","..."] # if we seem these tokens get rid of them
-    symbol2Rem = set(['%','$','{','}',"^","/", "\\",'#','*',"'",\
-                  "''", '_','(',')', '..',"+",'-',']','[']) # remove 
-    
-    start = time.time()
-    dicBow,dicMain = setUpBow2(df,extraWords) ### get initial data
-    end = time.time()### it doesn't look like I acutally use tok set
-    
-    setUpBow1 = end - start
-    ####################
-    dicBow = customProcTok(dicBow,symbol2Rem) #### this isn't working right
-    print('did customProcTok')
-
-    print('trimmed bow')
-    ###############
-    toks2Rem = ['\n  ','--',"",',',"\to","...","the", "what", "that", "then", \
-                "and", "for", "couldnt find", "from", 'with', "non", "in", "of"]
-    dicBow = remTok(dicBow,toks2Rem)
-    ############### work on this later once we have more words
-    #dicBow = customLookUpSpacy(dicBow)
-    word_to_root = buildCustomLookup(dicBow)
-    
-    start = time.time()
-    print('starting popBow')
-    """ this is also for later
-    """
-    #labelY,bowVecY,dicWord2Vec,dicWordPaper = popBow(dicBow,futureDict)
-    
-    thresh = 10
-    dicBow = trimBow2(dicBow, thresh)
-    
-    labelX,bowVecX,dicWord2Vec,dicWordPaper = popBow(dicBow,dicMain, word_to_root)
-    
-    print('finished pop Bow')
-    end = time.time()
-    popBow1 = end - start
-        
-    outLoc = 'one_hot_encoded_data'
-
-    fList = [dicBow,dicMain,labelX,dicWord2Vec]
-    nList = ['dicBow','dicMain','labelX', 'zDic2WordVec']
-
-    saveOutput2(fList,nList,outLoc)  ###### saving variables in the list with the desired names
-    
-    ############### converting bowvec to csc and saving it
-    bowVecX = bowVecX.tocsc()
-    path = outLoc + '/' + 'bowVecSparseX.npz'  
-    scipy.sparse.save_npz(path, bowVecX)  ##### saving the sparse matrix
-    
-    # bowVecY = bowVecY.tocsc()
-    # path = outLoc + '/' + 'bowVecSpares.npz'  
-    # scipy.sparse.save_npz(path, bowVecY)  ##### saving the sparse matrix
-    ########### temp analysis 2-24 8 pm
-    
-    # compDicBow = compositionOfDicBow(dicBow,authorSet,journalSet) # i don't remeber what this does
-    
-    # tots = compDicBow['other']  + compDicBow['journal'] + compDicBow['author'] 
-        

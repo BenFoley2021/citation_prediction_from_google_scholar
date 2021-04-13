@@ -2,40 +2,15 @@
 """
 Created on Sat Jan 30 16:53:58 2021
 
-want to try other one hot encoding strategies to see if they are faster
-likely some packages which are better than my solution
+trying to write a general function which makes it easy to parrallelize all the
+df operations
 
-https://www.kaggle.com/alexandrnikitin/efficient-xgboost-on-sparse-matrices
+currently on TypeError: string indices must be integers
 
-possible resources for dealing with names https://towardsdatascience.com/python-tutorial-fuzzy-name-matching-algorithms-7a6f43322cc5
-https://regex101.com/r/tR7kV2/1
-https://stackoverflow.com/questions/31248856/regex-full-name-to-abbreviated-name
+multilabelbinarizer with dask
+https://stackoverflow.com/questions/55487880/achieve-affect-of-sklearns-multilabelbinarizer-with-dask-dataframe-map-partitio
 
-converts the input df into one hot encoded outputs
-
-need to rewrite the encoder using built in (and faster functionality). If deal with each column
-indiviudally instead of bundling them all together, can write smaller more specfic functions which
-make best use of built in functionality of pandas. 
-    
-    spacy is really slow, and it's not that useful because theres so many science words not in its
-    database. get rid of it and rely on the custom lookup function to do things like qubits -> qubit'
-    
-    expand each column in as sparse array, stack the sparse array for each row to get a sparse matrix,
-    concat with exisiting sparse matrices resuling from processing other cols. expand out columns until done.
-    this way columns like authors and title can be treated seperately.
-    
-other one hot encoders https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.OneHotEncoder.html
-can pass this one a list of expected catagories. can do custom processing on the cols first to 
-considate synomnys and authors, then use this to get the sparse mat for each col
-    
-
-current progress on other one hot methods: one_hot_encode_col(df, col, cats_to_use)
-    works, but is still pretty slow
-
-
-custom lookup
-    generally looks good, does miss some things though
-        mass -> mask
+https://gdcoder.com/speed-up-pandas-apply-function-using-dask-or-swifter-tutorial/
 
 @author: Ben Foley
 """
@@ -50,7 +25,8 @@ from generic_func_lib import *
 from scipy.sparse import csr_matrix, hstack
 #from pandarallel import pandarallel
 import math
-from multiprocessing import  Pool
+import multiprocessing
+from multiprocessing import Pool
 from functools import partial
         
 def getTok2(dfIn, col, col_2_write):
@@ -73,59 +49,9 @@ def getTok2(dfIn, col, col_2_write):
     dfIn[col_2_write] = tokens
     return dfIn
 
-def updateBowDict(tokens,dicBow):
-    ##### processing words
-    ##### update dict with dic[word] = 0
-    #tokens = processTxt(textIn)
-    for tok in tokens:
-        if tok not in dicBow:
-            dicBow[tok] = 0
-            
-        elif tok in dicBow:
-            dicBow[tok] = dicBow[tok] + 1
-            #print(dicBow[tok])
-    return dicBow
+
     
-def setUpBow2(dfIn, extraWords):  #### adding the extra words to the list after the fact
-    # transfering data in the df to dictionary formatt, getting tokens or lemma of the title
-    # adding other info like year published and category to the tokens
-    dicBow = {} ##### the dictionary storing the words for the BOW
-    dicMain = {} #### dictionary with the row (or paper) id as the key, times cited, tokens, and number of tokens to be actually used in the model as values
-    print('starting on getting toks')
-    dfIn = getTok2(dfIn, 'titleID', 'tokens')  ##### getting tokens (or lemma) and adding the list as a new col in the df. # this is fairly slow
-    print('got tokens')
-
-    def get_toks_from_non_title_cols(x):
-        #### adds to the list of toks in the tokens column
-        ### extra info not in the title is added so it can be used in the bag of words
-        tempList= []
-        for col in extraWords:
-            if col == 'Authors':
-                tempList = tempList + x[col].split(',')
-            else:
-                if type([x[col]]) == str:
-                    x[col] = x[col].lower()
-                tempList = tempList +  [x[col]]
-                
-        return x['tokens'] +  tempList
-
-    def iter_df_make_bow_and_main(dfIn, dicBow, dicMain):
-        for i,row in dfIn.iterrows(): ###### looping through the dataframe (now with tokens/lemma) and building the dictionaries
-            if i%2000 == 0:
-                print(i)
-            
-            dicBow = updateBowDict(row['tokens'],dicBow)  #### update the bag of words dictionary 
-            ##### add the extraWords in here
-        
-            ### updating the dict with row id, tokens, and cited by info
-            dicMain[str(i)] = [row['cites_per_year'],row['tokens'],0]#### the zero will be updated with the word count for that ids later
-
-        return dicBow, dicMain
-
-    dfIn['tokens'] = dfIn.apply(get_toks_from_non_title_cols, axis=1)
-    dicBow, dicMain = iter_df_make_bow_and_main(dfIn, dicBow, dicMain)
-
-    return dicBow, dicMain                                 
+                   
 
 def removeFromDict(removeSet,dicIn): #### removes things add hoc from the dictionary
     #my_dict.pop('key', None) https://stackoverflow.com/questions/11277432/how-can-i-remove-a-key-from-a-python-dictionary
@@ -223,85 +149,6 @@ def remTok(bowDic,set2Rem): ### i guess theres another ad hoc function to remove
             pass
     return bowDic
 
-def popBow(dicBow: dict, dicMain: dict, intermediate_dict: dict): ####### this is the main loop which contructs the one hot encoded matrix for input to
-    """ constructs the one hot endoded input
-    """
-
-    def make_word_to_vec_and_toks_per_paper():
-        """ making a dictionary which converts tokens to the position in the 
-            vector. Also making a copy of dicBow which keeps track of which papers
-            are using which tokens. 
-        """
-        dicWordPaper = dicBow.copy()  #### the keys are the words, values list of paper ids
-        dicWord2Vec = {} ### keeps track of which word corresponds to which col in bowVec
-        for i,key in enumerate(dicBow): 
-            dicWord2Vec[key] = i #putting the location of each word into the dict
-            dicWordPaper[key] = [] ### changing the value to emptylists
-        
-        return dicWord2Vec, dicWordPaper
-
-    def loop_tokens(key, dicMain, dicWordPaper, wordVec):
-        """ loops through the tokens contained in each item of dicMain
-        """
-        tempSet = set()
-        dicBowTemp = dicBow.copy() ### getting copy of the bow and setting all keys to zero, will use this to count words for the current row
-        dicBowTemp = dict.fromkeys(dicBowTemp, 0) #setting all keys to 0 https://stackoverflow.com/questions/13712229/simultaneously-replacing-all-values-of-a-dictionary-to-zero-python
-            
-        for tok in dicMain[key][1]: ### looping through the tokens stored in dicMain
-            #### need to check if the tok is in the intermediate dictionary
-            # if this token got merged with another one (e.g. batteries -> battery)
-            # then we change the tok to its base (lemma, root, whatever), as thats 
-            # what will be in dicBow
-            if tok in intermediate_dict: # intermediate_dict is the hashmap made by build custom lookup table
-                tok = intermediate_dict[tok]
-        
-            if tok in dicBowTemp:
-                dicBowTemp[tok] = dicBowTemp[tok] + 1 #### #times the word is present
-                dicWordPaper[tok].append(key)  ###### adding the id of the paper which has that word
-                tempSet.add(tok) ###adding the token to a set which will be used to update the sparse array later
-                dicMain[key][2] = dicMain[key][2] + 1 #### keeping track of how many words from this ids are still going to be used
-
-        return dicMain, dicBowTemp, dicWordPaper, tempSet
-
-    def update_bowVec(tempSet, dicWord2Vec, bowVec, dicBowTemp, indi):
-        
-        for item in tempSet:  ### looping through the tokens encountered for this row (paper) and updating the one hot encoding 
-            indj = dicWord2Vec[item] ## getting the index (or column in the sparse matrix)
-            try: #### at one point I was having trouble with indexing, so that's why its a try block
-                bowVec[indi,indj] = dicBowTemp[item]
-                if dicBowTemp[item] < 0:
-                    print('warning! negative word count in dicBowTemp')
-                if bowVec[indi,indj] < 0:
-                    print('waring! negative word count in bowVec')
-            except:
-                print(str(indi) + ' ' + str(indj))
-
-        return bowVec
-
-    def loop_dicMain(dicMain, bowVec, dicWordPaper):
-        """ loops through the main dictionary
-        """
-        
-        indi = -1
-        for key in dicMain: # loop used to populate bowVec, as well update dicMain with the number of factors for each row (paper) that are being used in the model
-            indi = indi +1
-            label.append(dicMain[key][0]) # label is the number of citations, what I will try to predict later
-            dicMain, dicBowTemp, dicWordPaper, tempSet = loop_tokens(key, dicMain, dicWordPaper, wordVec)
-            bowVec = update_bowVec(tempSet, dicWord2Vec, bowVec, dicBowTemp, indi)
-
-        return label, bowVec, dicWord2Vec, dicWordPaper
-
-    # main function script, declaring variables 
-    label = [] #### label is the number of citations, what I will try to predict later
-    bowVec = lil_matrix((len(dicMain), len(dicBow)), dtype=np.int8) ## this will hold the one hot encoded bow    
-    wordVec = np.zeros(len(dicBow))  ### is the same length as the num of words in the bow
-    
-    dicWord2Vec, dicWordPaper = make_word_to_vec_and_toks_per_paper()
-    
-    label, bowVec, dicWord2Vec, dicWordPaper = loop_dicMain(dicMain, bowVec, dicWordPaper)
-
-    return label, bowVec, dicWord2Vec, dicWordPaper  #### dicWordPaper is obsolete in this version
-
 def analyzeFreq(dicIn):   
     ## this is also obsolete now
     
@@ -369,24 +216,6 @@ def trimBow3(bowDic,authorSet,journalSet,thresh,threshAuthor,threshJournal):  ##
             
     return tempDic
 
-def wordCount(curBowDic,mainDic): #### i think this is also obsolete now
-    #checks to see how many of the words for each paper are in the current bow dic.
-    # need to know if have eliminated all or most words from anything
-    
-    tempDic = mainDic.copy()
-    
-    for key in mainDic:
-        #print(key)
-        count = 0
-        for tok in mainDic[key][1]:
-            if tok in curBowDic:
-                count = count +1
-        
-        
-        tempDic[key] = [mainDic[key][0],mainDic[key][1],count]
-            
-    return tempDic
-
 def saveOutput2(fListIn,NListIn,outLoc):
         ###pickles the outfile and saves it to a dir
     import pickle
@@ -403,29 +232,6 @@ def saveOutput2(fListIn,NListIn,outLoc):
         with open(path, 'wb') as f:  # Python 3: open(..., 'wb')
             pickle.dump(vars2Save[i], f)
         f.close()
-
-def prepToks(dfIn,extraWords):
-    #adds the extra words to the title page
-    #https://stackoverflow.com/questions/13331698/how-to-apply-a-function-to-two-columns-of-pandas-dataframe
-    
-    def custom1(x):
-        tempStr = str()
-        for col in extraWords:
-            if col == 'cat':
-                tempList = x[col].split(' ')
-                for thing in tempList:
-                    tempStr = tempStr + ' ' + str(thing)
-                
-            elif col =='year':
-                
-                tempStr = tempStr + ' ' +  x[col]
-        
-        return x['title'] + ' ' + tempStr
-    
-    df['title'] = df.apply(custom1, axis=1)
-    
-    return df
-
             
 def dropCust1(dfIn):
     ### removes the rows for which 'cited' cant be converted to an int
@@ -700,27 +506,6 @@ def buildCustomLookup2(dicBow):
         
     return lookUpDict
 
-def condenseDicBow(dicBow,customLookUpDict):
-    """ converts tokens which were decided to have a root into that root.
-        eg. batteries -> battery
-        
-    PARAMS
-        dicBow: dict. The keys all tokens to be used in the one hot encoded model. 
-                        The values are the number of times that token has been used
-        customLookUpDict: dict. Maps tokens to their root, such as a key of "batteries"
-                            with a value of "battery".
-    """
-    
-    for key in customLookUpDict:
-        if key in dicBow:
-            try:
-                dicBow[customLookUpDict[key]] += dicBow[key] # since we are combing the tokens, also need to combine the number of times it's present
-                dicBow.pop(key) # remove the key. (eg batteries is merged with battery, then the batteries key removed)
-            except:
-                print('couldnt find ' + key)
-
-    return dicBow
-
 def removeBadScrap(dfIn):
     
     def customRemBad(x):
@@ -735,81 +520,6 @@ def removeBadScrap(dfIn):
                      
     return dfIn
 
-def compositionOfDicBow(dicBow,authorSet,journalSet):
-    """ figuring out which source is contributing how many factors to dicBow
-        right now we just the tokens form the title, the authors, and journals
-    
-
-    Parameters
-    ----------
-    dicBow : TYPE
-        DESCRIPTION.
-    authorSet : TYPE
-        DESCRIPTION.
-    journalSet : TYPE
-        DESCRIPTION.
-
-    Returns
-    -------
-    None.
-
-    """
-
-    outDict = {}
-    authorCount = 0
-    journalCount = 0
-    otherCount = 0
-    
-    for key in dicBow:
-        if key in authorSet:
-            authorCount += 1
-        elif key in journalSet:
-            journalCount += 1
-        else:
-            otherCount += 1
-            
-    outDict['author'] = authorCount
-    outDict['journal'] = journalCount
-    outDict['other'] = otherCount
-    
-    return outDict
-
-def predictOne(MLinput):
-    """ return 
-    """
-    import keras
-    import os 
-    
-    model = keras.models.load_model(os.getcwd()) #### probably want to load the model in flask,
-    # dont want to load it everytime need to predict
-    
-    return model.predict(MLinput)
-
-def words2ModelInput(inputDict, dicWord2Vec):
-    """ converting a list of words to input for model
-    
-    """
-    import spacy
-    nlp = spacy.load('en_core_web_sm')
-    
-    X = np.zeros(len(dicBow))
-    
-    tokens = []
-    factUsed = []
-    
-    tokens = ([token.lemma_ for token in nlp(inputDict['title']) if not token.is_stop])
-    
-    for thing in inputDict['otherFactor']:
-        tokens.append(thing)
-    
-    
-    for word in tokens:
-        #word = word.strip().lower()
-        #print(word)
-        if word in dicWord2Vec:
-            X[dicWord2Vec[word]] += 1
-            factUsed.append(word)
-    return X, factUsed
 
 def clean_authors(df):
     """ currently: this is more work than I realized, not sure if it's work doing
@@ -1129,13 +839,73 @@ def make_lower(x):
     return [y.lower() for y in x]
 
 def threshold_sparse_df(dfIn, threshold):
-
     #need to drop columns with less then threshold counts
     return dfIn.drop(dfIn.columns[dfIn.apply(lambda col: col.sum() < threshold)], axis=1)
 
-def split_df(df, num):
-        
-    return np.array_split(df, num)
+def str_col_to_list_par(df_col, splitter): # meant to be used with apply or lambda function
+    def custom(x, splitter):
+        return [y for y in x.split(splitter)]
+    
+    df_col = df_col.apply(lambda x: custom(x, splitter))
+                          
+    return df_col
+
+#############3
+def parallelize(data, func, num_of_processes=4):
+    """ func is the partial function
+    """
+    data_split = np.array_split(data, multiprocessing.cpu_count())
+    pool = Pool(num_of_processes)
+    data = pd.concat(pool.map(func, data_split))
+    pool.close()
+    pool.join()
+    return data
+
+def run_on_subset(func, data_subset):
+    return data_subset.apply(func, axis=1)
+
+def run_on_subset_mod(func, data_subset):
+    return data_subset.apply(func)
+
+def parallelize_on_rows(data, func, num_of_processes=4):
+    return parallelize(data, partial(run_on_subset_mod, func), num_of_processes)
+#################
+
+#### 
+def general_multi_proc(func, interable, *args):
+    """ func is the function we want to run, interable is the thing (usually
+        a df or array) that we want to split up and run the function on in
+        parrallel, *args are additional arguments that need to be passed to 
+        func
+    
+    Parameters
+    ----------
+    func : Function
+        The function to be run, takes iterable and *args as arguments.
+    interable : Anything which can be split up with np.array_split
+        The thing to be split up and run in parallel.
+    *args : arguments needed by func
+        DESCRIPTION.
+    Returns
+    -------
+    None.
+
+    """
+    
+    print(*args)
+    fp = partial(func, *args)
+    data_split = np.array_split(interable, multiprocessing.cpu_count())
+    process_pool = multiprocessing.Pool(multiprocessing.cpu_count())
+    output = process_pool.map(fp, data_split)
+    print(output)
+
+
+def test_func1(x):
+    return x**2
+
+def get_dummies_for_par(df):
+    journal_df = pd.get_dummies(df['Journal'], sparse = True)
+    return journal_df
 
 def process_cols(df):
     # converts each col to one hot encoded, calls functions to get
@@ -1146,10 +916,11 @@ def process_cols(df):
     # need a good way to get the dummies for normal cols 
     # https://towardsdatascience.com/encoding-categorical-features-21a2651a065c
     
-    pandarallel.initialize()
+    journal_df = general_multi_proc(get_dummies_for_par, df) ### this works
+    df['cited_num_sq'] = parallelize_on_rows(df['cited_num'], test_func1) # works
     
-    df['Authors_list'] = df['Authors'].parallel_apply(lambda x: str_col_to_list(x, ","))
-    df['titleID_list'] = df['titleID'].parallel_apply(lambda x: str_col_to_list(x, " "))
+    df['Authors_list'] = general_multi_proc(str_col_to_list_par, df['Authors'], " ")
+    df['titleID_list'] = df['titleID'].apply(lambda x: str_col_to_list(x, " "))
     print('did str_col_list')
     
     df['Authors_list'] = df['Authors_list'].apply(lambda x: make_lower(x))
@@ -1272,58 +1043,14 @@ def custom_encoder(df, categorical_features):
     
     return dicBow, dicMain
 
-def str_col_to_list(x, splitter): # meant to be used with apply or lambda function
-
-    return [y for y in x.split(splitter)]
-
-def clean_journal(x):
-    """ removes all numeric characters from the journal string
-        There are a lot of 17th annual..... or arxiv:73648742
-    """
-    y = str()
-    for char in x:
-        if char.isdigit() == False:
-            y += char
-    return y
-
-def test_journal_clean(df):
-    def remove_numeric(x):
-        #splits str into list, and things with numeric chars removed
-        #converts back to str
-        digits = set()
-        for y in x:
-            for char in y:
-                if char.isdigit():
-                    digit = True
-                    digits.add(y)
-            
-        for y in digits:
-            try:
-                x.remove(y)
-            except:
-                print(y)
-        return x
-        
-    df['Journal'] = df['Journal'].apply(lambda x: x.lower())
-    df['Journal'] = df['Journal'].apply(lambda x: str_col_to_list(x, ' '))
-    df['Journal'] = df['Journal'].apply(lambda x: remove_numeric(x))
-    df['Journal'] = df['Journal'].apply(lambda x: " ".join(x))
-
-    return df
-
 if __name__ == "__main__":
     ############ load the data, keeping the ids col as a str
-    #df_list = load_all_dfs("cleaned_data")
+    df_list = load_all_dfs("cleaned_data")
     
     # # for testing we want this to run fast
-    #df_list = df_list[0:1]
+    df_list = df_list[0:1]
     
-    #df = cat_dfs(df_list)
-    file_name = "df_for_results__27-03-2021 19_27_54.csv"
-    cwd = os.getcwd()
-    path = cwd + "\\cleaned_data\\"
-    df = pd.read_csv(path + file_name)
-    
+    df = cat_dfs(df_list)
     
     #df = pd.read_csv("cleaned_data//df_for_results__28-03-2021 10_02_35.csv")
     #df = df.iloc[0:10000]
@@ -1335,9 +1062,6 @@ if __name__ == "__main__":
     df = df.drop(labels = cols_to_drop, axis = 1)
     
     df.reset_index()
-    
-    df = test_journal_clean(df)
-    
     categorical_features = ['year','Authors','Journal']
     
     sparse_df = process_cols(df)
