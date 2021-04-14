@@ -13,6 +13,15 @@ https://stackoverflow.com/questions/55487880/achieve-affect-of-sklearns-multilab
 The parrallizing works ok for apply. its actually slower for the one hot encoding using the 
 multilabel binarizer
 
+notes on size of things
+np array of float 32
+.shape = (38525, 50)
+.size = 1926250
+.nbytes = 15410000
+
+each thing takes up 8 bytes
+so if have 4*10^6 * 
+
 @author: Ben Foley
 """
 
@@ -666,7 +675,6 @@ def general_multi_proc(func, interable, *args):
     
     return recombine(output)
 
-
 def test_func1(x):
     return x**x
 
@@ -720,13 +728,12 @@ def process_cols(df, svd = False):
 
     def do_svd(sparse_df):
         from sklearn.decomposition import TruncatedSVD
-        svd = TruncatedSVD(50)
+        svd = TruncatedSVD(100)
         
         sparse_mat = sparse_df.sparse.to_coo()
         X_svd = svd.fit_transform(sparse_mat)
         
         return X_svd
-    
 
     def save_outputs(svd):
         
@@ -750,9 +757,6 @@ def process_cols(df, svd = False):
         saveOutput2(fList,nList,outLoc) 
         return None
 
-
-
-
     sparse_df = process_title(df).join(process_journals(df), lsuffix='_left', rsuffix='_right')
     sparse_df = sparse_df.join(process_authors(df), lsuffix='_left', rsuffix='_right')
     # converting to sparse 
@@ -760,7 +764,7 @@ def process_cols(df, svd = False):
     if svd == True:
         X_svd = do_svd(sparse_df)
 
-    save_outputs()
+    save_outputs(svd)
 
     return None
     
