@@ -19,7 +19,7 @@ from functools import partial
 import numpy as np
 import pandas as pd
 import os
-
+from get_data_from_author_crawl.py import *
 from one_hot_encode_parallelizeing import general_multi_proc
 
 
@@ -55,6 +55,12 @@ if __name__ == "__main__":
     
     
     keywords = ['battery', 'batteries', 'li-ion']
+    locations = ['titleID', 'Journal', 'Abstract']
+    
+    
+    
+    
+    
     
     
     
