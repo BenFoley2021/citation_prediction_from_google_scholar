@@ -670,7 +670,7 @@ class DimensionalityReducer(base.BaseEstimator, base.TransformerMixin):
     def fit(self, X):
         
         grid = np.logspace(0,3,20)
-        grid = [math.ceil(num) for num in np.logspace(0,3,20) if math.ceil(num) > 30]
+        grid = [math.ceil(num) for num in np.logspace(0,3,20) if math.ceil(num) > 300]
         
         for i, num in enumerate(grid):
             dim_reducer = self.estimator(num)
@@ -715,10 +715,10 @@ def run_pipe():
         
     X_train, X_test, y_train, y_test, keys_train, keys_test = manTTS(keys,X,y)
     
-    dim_reducer_model = DimensionalityReducer(TruncatedSVD)
-    dim_reducer_model.fit(X)
+    #dim_reducer_model = DimensionalityReducer(TruncatedSVD)
+    #dim_reducer_model.fit(X)
     pipe = Pipeline([
-                    ('svd', dim_reducer_model),
+                    ('svd', TruncatedSVD(400)),
                     ('estimator', Ridge())
         ])
     
