@@ -3,8 +3,12 @@
 Created on Mon Feb  1 20:20:04 2021
 
 to do:
+    make an estimator/transform which decides k for svd by going to at least 
+    X explanined variance
+    
+    
     add custom objective function and metric for xgboost and tf
-    # xgboost, start with just first order
+    # xgboost, start with just first order. done
     
     objective function id like
     obj = abs(y - pred)/min(y, pred) # need to test this to make the min works
@@ -46,7 +50,11 @@ from sklearn.model_selection import cross_val_score
 import xgboost as xgb
 import pickle as pckl
 from generic_func_lib import *
-
+from sklearn.pipeline import Pipeline
+from sklearn import base
+from sklearn.linear_model import Ridge
+from sklearn.decomposition import TruncatedSVD
+import math
 
 #import tensorflow as tf
 
@@ -160,7 +168,7 @@ def manTTS(keys,X,y): #### setting up the train test split
     keys_test = keys[ind:-1]
     
     
-    return Xm_train,Xm_test,ym_train,ym_test,keys_train,keys_test
+    return Xm_train, Xm_test, ym_train, ym_test, keys_train, keys_test
 
 def getListCitedBy(dicMain):
     #### this gets a list of the citation numbers from the main dict. 
@@ -235,7 +243,6 @@ def putResInDf(preds,cited_test,keys_test):
     print('added residuals')
 
     return dfIn, missingIds
-    
 
 def run_xgboost_k_fold(Xm_train,ym_train):
     from sklearn.model_selection import KFold
@@ -528,7 +535,7 @@ def tempFlattenPreds(preds):
             
     return predsOut
 
-def packagePreds(preds,keys_test,ym_test,dicMain):
+def packagePreds(preds,keys_test,ym_test,dicMain): ## obsoleted
     #puts the preds and actual into a dict with the id as the key
     
     def verifyOrder(resDict,dicMain):
@@ -550,7 +557,28 @@ def packagePreds(preds,keys_test,ym_test,dicMain):
         
     return resDict, misMatchList
 
-def packagePreds_v2(preds,keys_test,ym_test):
+def packagePreds_v2(preds, keys_test, ym_test):
+    """ Puts the predictions in a dictionary with the index of the df as a key.
+        The y_test is also included just as gravity check that nothing got mixed up.
+        Residuals are processed this way to make it simple load them back into the 
+        df for analysis.
+
+    Parameters
+    ----------
+    preds : Array
+        The prdictions from the model.
+    keys_test : TYPE
+        The index of that row (or data point) from the df.
+    ym_test : TYPE
+        The labels for the test set.
+
+    Returns
+    -------
+    resDict : Dict
+        Dictionary containing the predicted and actual value for each data point,
+        where the key is the index of the df.
+
+    """
     #puts the preds and actual into a dict with the id as the key
             
     resDict = {} # residuals dictionary
@@ -559,7 +587,7 @@ def packagePreds_v2(preds,keys_test,ym_test):
         try:
             resDict[key] = [preds[i],ym_test[i]]
         except:
-            print(str(i) + ' ' + key)
+            print(str(i) + ' ' + str(key))
         
     return resDict
     
@@ -630,13 +658,91 @@ def run_for_encoding_v2():
     
     return resDict
 
+
+class DimensionalityReducer(base.BaseEstimator, base.TransformerMixin):
+    """ this if for svd / type estimator/transformers. find a value for k
+        that explains at least 95% of variance, set that trained model as
+        self. estimator
+    """
+    def __init__(self, estimator_class):
+        self.estimator = estimator_class
+    
+    def fit(self, X):
+        
+        grid = np.logspace(0,3,20)
+        grid = [math.ceil(num) for num in np.logspace(0,3,20) if math.ceil(num) > 30]
+        
+        for i, num in enumerate(grid):
+            dim_reducer = self.estimator(num)
+            dim_reducer.fit_transform(X)
+            print('current explanied ratioence ratio is ' + sum(dim_reducer.explained_variance_ratio_))
+            if sum(dim_reducer.explained_variance_ratio_) > 0.95:
+                break
+            if i == len(grid) - 1:
+                print('DimensionalityReducer never got to 95% explained variance')
+        
+        
+        self.estimator = dim_reducer # overwite the unfitted class with the fitted object of that class
+
+        return self
+    
+    def transform(self, X):
+
+        return self.estimator.transform(X)
+
+def run_pipe():
+    """ main script to run pipe with svd and predictor
+    """
+
+    from sklearn.model_selection import train_test_split #GridSearchCV, RandomizedSearchCV,
+    
+    def fetch_data():
+        var_names_dict, var_names_npz = loadInputData2('one_hot_encoded_data_v2')
+        print('loaded vars')
+        X = var_names_npz['bow_mat_X.npz']
+        y = var_names_dict['labels.pckl']
+        keys = var_names_dict['paper_ids.pckl']
+
+        return X, y, keys
+    
+    
+    
+    
+    X, y, keys = fetch_data()
+    y = y.reshape(-1,1)
+    # X_train, X_test, y_train, y_test = train_test_split(\
+    #                 X, y, test_size=0.2, random_state=0)
+        
+    X_train, X_test, y_train, y_test, keys_train, keys_test = manTTS(keys,X,y)
+    
+    dim_reducer_model = DimensionalityReducer(TruncatedSVD)
+    dim_reducer_model.fit(X)
+    pipe = Pipeline([
+                    ('svd', dim_reducer_model),
+                    ('estimator', Ridge())
+        ])
+    
+    pipe.fit(X_train, y_train)
+    
+    print(pipe.score(X_test, y_test))
+    
+    preds = pipe.predict(X_test)
+    
+    res_dct = packagePreds_v2(preds, keys_test, y_test)
+    save_pickles([res_dct], ["res_dct"], "model_related_outputs")
+    
+    
+    return pipe
+    
+
 if __name__ == '__main__':
     from sklearn.metrics import mean_squared_log_error
     from sklearn.metrics import mean_absolute_error
     from sklearn.metrics import mean_squared_error
     
 
-    resDict = run_for_encoding_v2()
+    run_pipe = run_pipe()
+
     # saving resDict
 
 

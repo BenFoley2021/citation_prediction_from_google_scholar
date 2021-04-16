@@ -700,7 +700,7 @@ def process_cols(df, svd = False):
         df['titleID_list'] = general_multi_proc(str_col_to_list_par, df['titleID'], " ")
         df['titleID_list'] = parallelize_on_rows(df['titleID_list'], make_lower)
         title_words = general_multi_proc(get_all_cat, df['titleID_list'])
-        synonyms = buildCustomLookup(title_words)
+        synonyms = buildCustomLookup(title_words) # this is pretty slow
         title_words = remove_synonym(title_words, synonyms)
         df['titleID_list2'] = general_multi_proc(merge_synonym_par, df['titleID_list'], \
                                              synonyms)
@@ -768,20 +768,22 @@ def process_cols(df, svd = False):
 
     return None
     
+def run_script():
+    """runs everything in if __name__ == "__main__"
+        want to be able to call this whole process from the build model predict script
+    
 
-if __name__ == "__main__":
-    ############ load the data, keeping the ids col as a str
-    #df_list = load_all_dfs("cleaned_data")
+    Returns
+    -------
+    None.
+
+    """
     
-    # # for testing we want this to run fast
-    #df_list = df_list[0:1]
-    
-    #df = cat_dfs(df_list)
-    
-    file_name = "df_for_results__27-03-2021 19_27_54.csv"
+    file_name = "df_for_results__27-03-2021 16_20_32.csv"
     cwd = os.getcwd()
     path = cwd + "\\cleaned_data\\"
     df = pd.read_csv(path + file_name)
+    #df = df.iloc[0:1000]
     
     
     #df = pd.read_csv("cleaned_data//df_for_results__28-03-2021 10_02_35.csv")
@@ -796,10 +798,21 @@ if __name__ == "__main__":
     df.reset_index()
     categorical_features = ['year','Authors','Journal']
     
+    df = df[(df['cites_per_year'] != np.inf) & (df['cites_per_year'] != -np.inf)]
     
-    process_cols(df, svd = True)
+    process_cols(df)
     
-    #dicBow, dicMain = ustom_encoder(df, categorical_features)
+    
+    
     
 
+if __name__ == "__main__":
+    ############ load the data, keeping the ids col as a str
+    #df_list = load_all_dfs("cleaned_data")
+    
+    # # for testing we want this to run fast
+    #df_list = df_list[0:1]
+    
+    #df = cat_dfs(df_list)
+    run_script()
 
