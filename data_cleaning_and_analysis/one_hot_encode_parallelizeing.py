@@ -779,12 +779,12 @@ def run_script():
 
     """
     
-    file_name = "df_for_results__27-03-2021 16_20_32.csv"
+    file_name = "batteries__15-04-2021 22_33_32.csv"
     cwd = os.getcwd()
-    path = cwd + "\\cleaned_data\\"
+    path = cwd + "\\data_subsets\\"
     df = pd.read_csv(path + file_name)
     #df = df.iloc[0:1000]
-    
+    #df = df.iloc[0:1000]
     
     #df = pd.read_csv("cleaned_data//df_for_results__28-03-2021 10_02_35.csv")
     #df = df.iloc[0:10000]

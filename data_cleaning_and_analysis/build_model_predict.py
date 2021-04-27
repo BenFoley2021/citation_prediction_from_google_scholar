@@ -35,21 +35,23 @@ to do:
     
 @author: Ben Foley
 """
+from generic_func_lib import *
+from one_hot_encode_parallelizeing import *
 
 import pandas as pd
 import math
 import numpy as np
 import matplotlib.pyplot as plt
-import numpy as np
-from numpy import savez_compressed
-from numpy import load
+
+#from numpy import savez_compressed
+#from numpy import load
 import scipy.sparse
-from scipy.sparse import coo_matrix, lil_matrix
+#from scipy.sparse import coo_matrix, lil_matrix
 from sklearn.model_selection import KFold
 from sklearn.model_selection import cross_val_score
 import xgboost as xgb
 import pickle as pckl
-from generic_func_lib import *
+
 from sklearn.pipeline import Pipeline
 from sklearn import base
 from sklearn.linear_model import Ridge
@@ -693,7 +695,7 @@ class DimensionalityReducer(base.BaseEstimator, base.TransformerMixin):
 def run_pipe():
     """ main script to run pipe with svd and predictor
     """
-
+    from sklearn.ensemble import RandomForestRegressor
     from sklearn.model_selection import train_test_split #GridSearchCV, RandomizedSearchCV,
     
     def fetch_data():
@@ -715,11 +717,12 @@ def run_pipe():
         
     X_train, X_test, y_train, y_test, keys_train, keys_test = manTTS(keys,X,y)
     
+    # the diimensionality reducer needs a better way to find num components
     #dim_reducer_model = DimensionalityReducer(TruncatedSVD)
     #dim_reducer_model.fit(X)
     pipe = Pipeline([
-                    ('svd', TruncatedSVD(400)),
-                    ('estimator', Ridge())
+                    ('svd', TruncatedSVD(100)),
+                    ('estimator', RandomForestRegressor())
         ])
     
     pipe.fit(X_train, y_train)
@@ -727,6 +730,25 @@ def run_pipe():
     print(pipe.score(X_test, y_test))
     
     preds = pipe.predict(X_test)
+    
+    preds = preds.reshape(-1,1)
+    ym_test = ym_test.reshape(-1,1)
+    
+    res = preds - ym_test
+
+    preds_hist = np.histogram(preds)
+    hist_bins = preds_hist[1][0:-1]
+    plt.plot(hist_bins, preds_hist[0])
+    
+    
+    y_test_hist = np.histogram(ym_test)
+    hist_bins = preds_hist[1][0:-1]
+    plt.plot(hist_bins, y_test_hist[0])
+    
+    res_hist = np.histogram(res)
+    hist_bins = res_hist[1][0:-1]
+    
+    plt.plot(hist_bins, res_hist[0])
     
     res_dct = packagePreds_v2(preds, keys_test, y_test)
     save_pickles([res_dct], ["res_dct"], "model_related_outputs")
@@ -740,7 +762,7 @@ if __name__ == '__main__':
     from sklearn.metrics import mean_absolute_error
     from sklearn.metrics import mean_squared_error
     
-
+    #run_script()
     run_pipe = run_pipe()
 
     # saving resDict
