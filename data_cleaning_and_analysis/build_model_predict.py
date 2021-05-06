@@ -1,14 +1,40 @@
 # -*- coding: utf-8 -*-
 """
 Created on Mon Feb  1 20:20:04 2021
+5/4 things to try: https://pythonhealthcare.org/2019/04/12/122-oversampling-to-correct-for-imbalanced-data-using-naive-sampling-or-smote/#:~:text=SMOTE%20with%20continuous%20variables,point%20in%20to%20the%20sample.
+
+5/2
+    to do: use k fold, switch o smote for resampling
+    try using ranked order, write thing to plot the number captured as 
+    f(fraction selected)
+
+
+4/29
+    having trouble getting reasonable fits with the perovskite data set
+    betting a slightly bigger set to try
+
+    the imbalance makes classification harder
+    
+    try oversampling, then smote
+    https://machinelearningmastery.com/smote-oversampling-for-imbalanced-classification/
+
+4/26:
+    runs with the prelimiany perovskite data, ~20k articles
+    xgb boost able to capture some variance when svd done on X, (at least it doesn't guess the
+    average for everything')
+    
+    need to go back and get a real residual analysis working
+    
+    functions used
+    #run_script() gets the data 
+    run_pipe = run_xgb_pipe()
 
 to do:
     make an estimator/transform which decides k for svd by going to at least 
     X explanined variance
+        running this takes a really long time. just use grid search
     
     
-    add custom objective function and metric for xgboost and tf
-    # xgboost, start with just first order. done
     
     objective function id like
     obj = abs(y - pred)/min(y, pred) # need to test this to make the min works
@@ -141,9 +167,7 @@ def loadInputData2(dirToRead): ### another ad hoc function to load the data for 
     var_names_dict = loadPickled2(dirToRead)
     var_names_npz = loadFiles2(dirToRead)
     
-    
     return var_names_dict, var_names_npz
-
 
 def tryCrossVal(X,y,model): #### not used in current run
     kfold = KFold(n_splits=3)
@@ -152,11 +176,11 @@ def tryCrossVal(X,y,model): #### not used in current run
 
     return results
     
-def manTTS(keys,X,y): #### setting up the train test split
+def manTTS(keys,X,y, ind): #### setting up the train test split
     #doing it this way so I can keep track of the ids for each paper (row)
     #split hardcoded to 80/20 rn
 
-    ind = int(np.round(len(y)*.8))
+     # hard coded to have the ones from 2019
     
     #keys = list(dicMain.keys())
     
@@ -660,7 +684,6 @@ def run_for_encoding_v2():
     
     return resDict
 
-
 class DimensionalityReducer(base.BaseEstimator, base.TransformerMixin):
     """ this if for svd / type estimator/transformers. find a value for k
         that explains at least 95% of variance, set that trained model as
@@ -692,37 +715,293 @@ class DimensionalityReducer(base.BaseEstimator, base.TransformerMixin):
 
         return self.estimator.transform(X)
 
+def fetch_data():
+    var_names_dict, var_names_npz = loadInputData2('one_hot_encoded_data_v2')
+    print('loaded vars')
+    X = var_names_npz['bow_mat_X.npz']
+    y = var_names_dict['labels.pckl']
+    keys = var_names_dict['paper_ids.pckl']
+    idx = var_names_dict["year_idx.pckl"]
+    return X, y, keys, idx
+
+def set_classes(y: np.array, thresh1: float, thresh2: float):
+    """ sets any y above a threshold to 1, anything below to 1
+    """
+    y_class = np.zeros(y.shape)
+    for i, thing in enumerate(y):
+        if thing > thresh2:
+            y_class[i] = 1
+        elif thing > thresh1:
+            y_class[i] = 1
+        else:
+            y[i] = 0
+    
+    return y_class
+
+def oversample(X_train, y_train, method = 'normal'):
+    """ oversampling to deal with imbalanced classes
+    """
+    #normal, no smote
+    if method == 'normal':
+        from imblearn.over_sampling import RandomOverSampler
+    
+        oversample = RandomOverSampler(sampling_strategy='minority')
+        
+    else:
+        from imblearn.over_sampling import SMOTE
+        oversample = SMOTE()
+        
+    X_over, y_over = oversample.fit_resample(X_train, y_train)
+    return X_over, y_over
+
+def custom_metrics(preds):
+    #want to know how many papers we weeded out 
+    counter = 0
+    for i, thing in enumerate(preds):
+        if type(thing) == np.float64:
+            if int(thing) == 1:
+                counter += 1
+        else:
+            if thing[1] > thing[0]:
+                counter += 1
+    print('left with ' + str(counter/len(preds)) + " fraction of things")
+    
+def run_xgb_pipe_classify():
+    """ script for fitting an xgboost model
+        functions for the custom objective function are included
+        dimensioality reduction done in here
+    """
+    
+    from sklearn.model_selection import train_test_split #GridSearchCV, RandomizedSearchCV,
+    import xgboost as xgb
+    from sklearn.decomposition import TruncatedSVD
+    from typing import Tuple
+    import numpy as np
+    from sklearn.metrics import classification_report,confusion_matrix
+    ###########################
+    # example code for custom objective function
+    def gradient_c(predt: np.ndarray, dtrain: xgb.DMatrix) -> np.ndarray:
+        '''Compute the gradient squared log error.'''
+        ''' plugged  d/d(predt) abs(y-predt)/(np.minimum(predt, y)+1) into wolfram'''
+        y = dtrain.get_label() + 1
+        #return abs(y-predt)/(np.minimum(predt, y)+1))
+        grad = np.zeros(y.shape)
+        for i, val in enumerate(y):
+            if predt[i] > y[i]:
+                grad[i] = 1/(y[i] + 1)
+            else:
+                grad[i] = -(y[i] + 1)/(predt[i]**2 + 1)
+        #y[y < 0] = 10**10
+        #grad = abs((((y-predt)**2)**0.5)/(np.minimum(predt, y) + 1))
+       
+        return grad
+        #return (np.log1p(y) - np.log1p(predt)**2)/ (np.log1p(y) - 1)
+   
+    def hessian_c(predt: np.ndarray, dtrain: xgb.DMatrix) -> np.ndarray:
+        '''Compute the hessian for squared log error.'''
+
+        return np.ones(predt.shape)
+   
+    def custom_obj(predt: np.ndarray,
+                    dtrain: xgb.DMatrix) -> Tuple[np.ndarray, np.ndarray]:
+        '''Squared Log Error objective. A simplified version for RMSLE used as
+        objective function.
+        '''
+        grad = gradient_c(predt, dtrain)
+        hess = hessian_c(predt, dtrain)
+        return grad, hess
+    
+    def cust_eval(predt: np.ndarray, dtrain: xgb.DMatrix) -> Tuple[str, float]:
+        ''' Root mean squared log error metric.'''
+        y = dtrain.get_label()
+        #predt[predt < -1] = -1 + 1e-6
+        elements = np.zeros(y.shape)
+        for i, pred_val in enumerate(predt):
+            elements[i] = abs(y[i] -pred_val)/min(pred_val, y[i])
+        return 'cust_eval', elements.mean()
+    
+    ################### start of script
+    from xgboost import XGBClassifier
+    X, y, keys, idx = fetch_data()
+    #y = ravel(y)
+    #y = y.reshape(-1,1)
+    # X_train, X_test, y_train, y_test = train_test_split(\
+    #                 X, y, test_size=0.2, random_state=0)
+        
+
+    
+    #y = y + 3
+
+    X_train, X_test, y_train, y_test, keys_train, keys_test = manTTS(keys, X, y, idx)
+    w = (y_train+1)**0.2
+    y_train = set_classes(y_train, 10, 10)
+    y_test = set_classes(y_test, 10, 10)
+    #X_train, X_test, y_weight, y_weight_test, keys_train, keys_test = manTTS(keys, X, y_weight, idx)
+    # train and fit the svd transformer
+    svd = TruncatedSVD(6000)
+    
+    #w = y_weight# switched to oversampling
+    X_train = svd.fit_transform(X_train)
+    X_test = svd.transform(X_test)
+    #X_train, y_train = oversample(X_train, y_train, 'smote')
+    
+    
+    print('explained variance ratio is ' + str(sum(svd.explained_variance_ratio_)))
+    data_dmatrix = xgb.DMatrix(data=X_train, label=y_train)
+    
+    #params = {"objective":"reg:logistic"}
+    # params = {
+    # 'eta': 0.3, 
+    # 'max_depth': 3,
+    # 'num_class': 2}
+    
+    model = XGBClassifier()
+    eval_set = [(X_test, y_test)]
+    model.fit(X_train, y_train, early_stopping_rounds=15,
+                      verbose = 2, eval_set = eval_set, sample_weight=w)
+                      # try aucpr
+    data_dmatrix_X_test = xgb.DMatrix(data=X_test)
+    preds = model.predict(X_test)
+    
+    import numpy as np
+    from sklearn.metrics import precision_score, recall_score, accuracy_score
+    
+    preds = model.predict(X_test)
+    best_preds = np.asarray([np.argmax(line) for line in preds])
+    
+    print("Precision = {}".format(precision_score(y_test, best_preds, average='macro')))
+    print("Recall = {}".format(recall_score(y_test, best_preds, average='macro')))
+    print("Accuracy = {}".format(accuracy_score(y_test, best_preds)))
+    print(classification_report(y_test,preds))
+    custom_metrics(preds)
+    res_analysis(preds, y_test, keys_test)
+
+    return model
+
+def run_xgb_pipe():
+    """ script for fitting an xgboost model
+        functions for the custom objective function are included
+        dimensioality reduction done in here
+    """
+    
+    from sklearn.model_selection import train_test_split #GridSearchCV, RandomizedSearchCV,
+    import xgboost as xgb
+    from sklearn.decomposition import TruncatedSVD
+    from typing import Tuple
+    import numpy as np
+    from sklearn.metrics import classification_report,confusion_matrix
+    ###########################
+    # example code for custom objective function
+    def gradient_c(predt: np.ndarray, dtrain: xgb.DMatrix) -> np.ndarray:
+        '''Compute the gradient squared log error.'''
+        ''' plugged  d/d(predt) abs(y-predt)/(np.minimum(predt, y)+1) into wolfram'''
+        y = dtrain.get_label() + 1
+        #return abs(y-predt)/(np.minimum(predt, y)+1))
+        grad = np.zeros(y.shape)
+        for i, val in enumerate(y):
+            if predt[i] > y[i]:
+                grad[i] = 1/(y[i] + 1)
+            else:
+                grad[i] = -(y[i] + 1)/(predt[i]**2 + 1)
+        #y[y < 0] = 10**10
+        #grad = abs((((y-predt)**2)**0.5)/(np.minimum(predt, y) + 1))
+       
+        return grad
+        #return (np.log1p(y) - np.log1p(predt)**2)/ (np.log1p(y) - 1)
+   
+    def hessian_c(predt: np.ndarray, dtrain: xgb.DMatrix) -> np.ndarray:
+        '''Compute the hessian for squared log error.'''
+
+        return np.ones(predt.shape)
+   
+    def custom_obj(predt: np.ndarray,
+                    dtrain: xgb.DMatrix) -> Tuple[np.ndarray, np.ndarray]:
+        '''Squared Log Error objective. A simplified version for RMSLE used as
+        objective function.
+        '''
+        grad = gradient_c(predt, dtrain)
+        hess = hessian_c(predt, dtrain)
+        return grad, hess
+    
+    def cust_eval(predt: np.ndarray, dtrain: xgb.DMatrix) -> Tuple[str, float]:
+        ''' Root mean squared log error metric.'''
+        y = dtrain.get_label()
+        #predt[predt < -1] = -1 + 1e-6
+        elements = np.zeros(y.shape)
+        for i, pred_val in enumerate(predt):
+            elements[i] = abs(y[i] -pred_val)/min(pred_val, y[i])
+        return 'cust_eval', elements.mean()
+    
+    ################### start of script
+    from xgboost import XGBRegressor
+    X, y, keys, idx = fetch_data()
+    #y = ravel(y)
+    #y = y.reshape(-1,1)
+    # X_train, X_test, y_train, y_test = train_test_split(\
+    #                 X, y, test_size=0.2, random_state=0)
+        
+    y_weight = y
+    
+    y = y + 3
+    #y = set_classes(y_weight, 10, 10)
+    X_train, X_test, y_train, y_test, keys_train, keys_test = manTTS(keys, X, y, idx)
+    
+    #X_train, X_test, y_weight, y_weight_test, keys_train, keys_test = manTTS(keys, X, y_weight)
+    # train and fit the svd transformer
+    svd = TruncatedSVD(1500)
+    
+    #w = y_weight switched to oversampling
+    X_train = svd.fit_transform(X_train)
+    X_test = svd.transform(X_test)
+    data_dmatrix_X_test = xgb.DMatrix(data=X_test)
+    #X_train, y_train = oversample(X_train, y_train, 'smote')
+    
+    print('explained variance ratio is ' + str(sum(svd.explained_variance_ratio_)))
+    data_dmatrix = xgb.DMatrix(data=X_train, label=y_train)
+    
+    #params = {"objective":"reg:logistic"}
+    # params = {
+    # 'eta': 0.3, 
+    # 'max_depth': 3,
+    # 'num_class': 2}
+    
+    model = XGBRegressor(objective = "reg:squaredlogerror")
+    eval_set = [(X_test, y_test)]
+    model.fit(X_train, y_train, early_stopping_rounds=15,
+                      verbose = 2, eval_metric = "rmsle", eval_set = eval_set)
+                      # try aucpr
+    data_dmatrix_X_test = xgb.DMatrix(data=X_test)
+    preds = model.predict(X_test)
+    
+    import numpy as np
+    from sklearn.metrics import precision_score, recall_score, accuracy_score
+    
+    preds = model.predict(X_test)
+    best_preds = np.asarray([np.argmax(line) for line in preds])
+    
+    res_dct = packagePreds_v2(preds, keys_test, y_test)
+    save_pickles([res_dct], ["res_dct"], "model_related_outputs")
+
+    return model
+
 def run_pipe():
     """ main script to run pipe with svd and predictor
     """
     from sklearn.ensemble import RandomForestRegressor
-    from sklearn.model_selection import train_test_split #GridSearchCV, RandomizedSearchCV,
     
-    def fetch_data():
-        var_names_dict, var_names_npz = loadInputData2('one_hot_encoded_data_v2')
-        print('loaded vars')
-        X = var_names_npz['bow_mat_X.npz']
-        y = var_names_dict['labels.pckl']
-        keys = var_names_dict['paper_ids.pckl']
-
-        return X, y, keys
-    
-    
-    
-    
-    X, y, keys = fetch_data()
+    X, y, keys, idx = fetch_data()
     y = y.reshape(-1,1)
     # X_train, X_test, y_train, y_test = train_test_split(\
     #                 X, y, test_size=0.2, random_state=0)
         
-    X_train, X_test, y_train, y_test, keys_train, keys_test = manTTS(keys,X,y)
+    X_train, X_test, y_train, y_test, keys_train, keys_test = manTTS(keys,X,y, idx)
     
     # the diimensionality reducer needs a better way to find num components
     #dim_reducer_model = DimensionalityReducer(TruncatedSVD)
     #dim_reducer_model.fit(X)
     pipe = Pipeline([
                     ('svd', TruncatedSVD(100)),
-                    ('estimator', RandomForestRegressor())
+                    ('estimator', Ridge())
         ])
     
     pipe.fit(X_train, y_train)
@@ -732,16 +1011,16 @@ def run_pipe():
     preds = pipe.predict(X_test)
     
     preds = preds.reshape(-1,1)
-    ym_test = ym_test.reshape(-1,1)
+    y_test = y_test.reshape(-1,1)
     
-    res = preds - ym_test
-
+    res = preds - y_test
+    
     preds_hist = np.histogram(preds)
     hist_bins = preds_hist[1][0:-1]
     plt.plot(hist_bins, preds_hist[0])
     
     
-    y_test_hist = np.histogram(ym_test)
+    y_test_hist = np.histogram(y_test)
     hist_bins = preds_hist[1][0:-1]
     plt.plot(hist_bins, y_test_hist[0])
     
@@ -756,14 +1035,30 @@ def run_pipe():
     
     return pipe
     
+def res_analysis(preds, y_test, keys_test):
+    res = preds - y_test
+    
+    preds_hist = np.histogram(preds)
+    hist_bins = preds_hist[1][0:-1]
+    plt.plot(hist_bins, preds_hist[0])
+    
+    y_test_hist = np.histogram(y_test)
+    hist_bins = preds_hist[1][0:-1]
+    plt.plot(hist_bins, y_test_hist[0])
+    
+    res_hist = np.histogram(res)
+    hist_bins = res_hist[1][0:-1]
+    
+    plt.plot(hist_bins, res_hist[0])
+    
+    res_dct = packagePreds_v2(preds, keys_test, y_test)
+    save_pickles([res_dct], ["res_dct"], "model_related_outputs")
+
 
 if __name__ == '__main__':
-    from sklearn.metrics import mean_squared_log_error
-    from sklearn.metrics import mean_absolute_error
-    from sklearn.metrics import mean_squared_error
     
     #run_script()
-    run_pipe = run_pipe()
+    run_pipe = run_xgb_pipe_classify()
 
     # saving resDict
 

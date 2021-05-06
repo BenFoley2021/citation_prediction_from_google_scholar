@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
 Created on Fri Feb 26 11:38:00 2021
-	Unnamed: 0	ids	title	jref	cited	scrapTitle	year	doi
-0	0	0704.0135	A Single Trapped Ion as a Time-Dependent Harmonic Oscillator	Phys. Rev. A 76, 052105 (2007)	1.8571428571428572	"data-clk-atid=""0YWF6r0pXJ0J"">Single trapped ion as a time-dependent harmonic oscillator"	2007	10.1103/PhysRevA.76.052105
 
+need 2D hist of relative error as f(y)
+do this today
 @author: Ben Foley
 """
 
@@ -12,9 +12,10 @@ import pandas as pd
 import pickle
 import seaborn as sns
 #from rawDataToBagOfWords_oneHotEncode_3 import *
-
+import numpy as np
 import os
 from generic_func_lib import *
+import matplotlib.pyplot as plt
 #from makingPrelimAnalFigs import *
 
 os.getcwd()
@@ -22,7 +23,7 @@ os.getcwd()
 def putResInDf(df,resDict):
     
     df['pred'] = df['index1'].apply(lambda x: resDict[x][0])
-    df['actual'] = df['index1'].apply(lambda x: resDict[x][1])
+    df['actual'] = df['index1'].apply(lambda x: resDict[x][1][0])
     df['res'] = df['actual'] - df['pred']
 
     return df
@@ -46,7 +47,7 @@ def setUp(df_to_read, resDict):
     # df['year'] = df['year'].astype(int)
     # df['cited'] = df['cited'].astype(int)
     
-    #converting to cited per ( and making sure they still line up with whats in resDict)
+    #converting to cited per (and making sure they still line up with whats in resDict)
     #df['cited'] = df['cited'] / (int(2021) - df['year'])
     
     #df2.to_csv('resDf_2-26')
@@ -132,21 +133,70 @@ def compare_res(df):
     plt.legend()
     plt.xlim((0, 100))
     
-
+def two_d_hist(df, x_lims, y_lims):
+    # relativeRes
+    # actual
+    plt.figure()
+    sns.displot(df, x="actual", y="relativeRes", kind="kde", levels = 5)
+    plt.xlim(x_lims[0], x_lims[1])
+    plt.ylim(y_lims[0], y_lims[1])
+    
+def two_d_scatter(df, x_lims, y_lims, hue = None):
+    df['year'] = df['year'].astype(int)
+    #sns.color_palette("Spectral", as_cmap=True)
+    plt.figure()
+    sns.scatterplot(data = df, x='actual', y='relativeRes', hue = hue,\
+                    alpha=0.1, palette = 'Spectral')
+    
+    plt.xlim(x_lims[0], x_lims[1])
+    plt.ylim(y_lims[0], y_lims[1])
+    
+    
+def fraction_correct_and_order(res_dict_to_read):
+    """ Given index, actual, and predicted, do
+        calculate the % got correct for a quantile (eg top 10%)
+        sort each these for actual and predicted
+        
+        make colormap where order (1-N) is color, 
+    """
+    dict_to_df = {}
+    for key, val in res_dict_to_read.items():
+        dict_to_df[int(key)] = (val[0], val[1])
+        
+    df = pd.DataFrame(dict_to_df).transpose().reset_index()
+    df = df.rename(columns = {0: 'preds', 1: 'actual'})
+    quantile = 0.1
+    
+    # need to get quantiles for actual and predicted
+    df = df.sort_values(by = 'actual', ascending = False)
+    df_top_actual = df.iloc[0:int(np.round(len(df)*quantile))]
+    
+    df = df.sort_values(by = 'preds', ascending = False)
+    df_top_preds = df.iloc[0:int(np.round(len(df)*quantile))]
+    
+    fraction_correct = len(df_top_preds.merge(df_top_actual)) / len(df_top_actual)
+    print(fraction_correct)
+    
+    return None
+    
 if __name__ == "__main__":
     
-    res_dict_to_read = load_one_pickled("resDict.pckl", "model_related_outputs")
+    res_dict_to_read = load_one_pickled("res_dct.pckl", "model_related_outputs")
     
-    df_file_name = 'data_sent_to_model.csv'
+    fraction_correct_and_order(res_dict_to_read)
     
-    df2 = setUp(df_file_name, res_dict_to_read)
-    df2['relativeRes'] = df2.apply(getRelativeRes, axis =1)
+    # df_file_name = 'data_sent_to_model.csv'
+    
+    # df2 = setUp(df_file_name, res_dict_to_read)
+    # df2['relativeRes'] = df2.apply(getRelativeRes, axis =1)
 
-    df2 = make_shuffle_rel_res(df2)
+    # df2 = make_shuffle_rel_res(df2)
     
-    compare_res_rel(df2)
+    # compare_res_rel(df2)
     
-    compare_res(df2)
+    # compare_res(df2)
+    
+    # two_d_scatter(df2, (0, 100), (-50, 10), hue = 'year')
 
 #df2 = pd.read_csv('resDF_2-26.csv')
 

@@ -2,6 +2,8 @@
 """
 Created on Sat Jan 30 16:53:58 2021
 
+
+
 trying to write a general function which makes it easy to parrallelize all the
 df operations
 
@@ -31,7 +33,7 @@ import numpy as np
 import time
 import scipy.sparse
 from scipy.sparse import coo_matrix, lil_matrix
-from generic_func_lib import *
+#from generic_func_lib import *
 from scipy.sparse import csr_matrix, hstack
 #from pandarallel import pandarallel
 import math
@@ -39,6 +41,7 @@ import multiprocessing
 from multiprocessing import Pool
 from functools import partial
 import os
+import pickle
 def getTok2(dfIn, col, col_2_write):
     """ Using spacy to get the tokens from the title
     """
@@ -459,6 +462,82 @@ def removeBadScrap(dfIn):
                      
     return dfIn
 
+def custom_clean_tokens(tok_list: list) -> list:
+    """ removes tokens which have lots of number or nonsense characters (those in symbol2Rem)
+    
+        custom text parsing to remove some of the trash that made it through spacy tokenization
+
+        if key has len 1 remove it
+        if it has any of the characters in symbol2rem
+        if it can be converted into a float
+        more than 2 characters of the string can be converted into a float
+
+    Parameters
+    ----------
+    tok_list : list
+            the string to be broken up 
+    symbol2Rem : Set
+        Set of symbols, if a token contains these symbols, we remove it.
+
+    Returns
+    -------
+    tempDic : Dict
+        The updated dicBow after removeing tokens.
+
+    """
+    #stop_words = inputs['stop_words']
+    stop_words = set(['and', 'the', 'a', 'to', 'with', 'for', 'then', 'there', 'what',\
+                      '\n  ','--',"",',',"\to","..."])
+    symbol2Rem = set(['%','$','{','}',"^","/", "\\",'#','*',"'",\
+                  "''", '_','(',')', '..',"+",'-',']','[']) # remove 
+    
+    #symbol2Rem = inputs['set_to_remove']
+    years = np.linspace(1990,2021,32).astype(int).tolist()
+    years = [str(i) for i in years]
+    years = set(years)
+    
+    okSet = set(['1d','2d','3d','4d'])
+    okSet.update(years)
+    toks_out = []
+
+    for key in tok_list:
+        count = 0
+        write = True  
+        if key in okSet:
+            pass
+        elif key in stop_words:
+            write = False
+        else: 
+            try:
+                for n in key:
+                    try:
+                        float(n)
+                        count = count +1
+                    except:
+                        pass
+        
+                    if n in symbol2Rem or count > 1:
+                        write = False
+                        break
+                try:
+                    float(key)
+                    write = False
+                    continue
+                except:
+                    pass
+                if len(key) < 1:
+                    write = False
+                    continue    
+                if len(key) < 3 and key not in okSet:
+                    write = False
+                    continue  
+            except:
+                write = False
+
+        if write == True:
+            toks_out.append(key)
+    return toks_out 
+
 def sparse_dummies(df, column):
     """Returns sparse OHE matrix for the column of the dataframe"""
     # a much simpler one hot encoder if I'm not worried about customization
@@ -687,25 +766,47 @@ def clean_journal(x):
         There are a lot of 17th annual..... or arxiv:73648742
     """
     y = str()
-    for char in x:
+    for char in x.strip().lower():
         if char.isdigit() == False:
             y += char
     return y
 
-def process_cols(df, svd = False):
+def clean_year(x, years):
+    if x.isdigit():
+        x = int(x)
+        if x in years:
+            return str(x)
+        else:
+            return 'old'
+    else:
+        return 'not number'
+
+def process_cols(df, test_date, svd = False):
     # converts each col to one hot encoded, calls functions to get
     # all the cats, clean cats, and finally uses the set of cats for each
     # col to get sparse mats. 
     def process_title(df):
+        # path = os.getcwd()
+        # path_file = path + "\\other data to be loaded\\" + 'stop_words.txt'
+        # stop_words = set()
+        # with open(path_file, 'rb') as f:
+        #     for line in f:
+        #         stop_words.add(str(line))
+        # stop_words = set(['the', 'a', 'to', 'with', 'for', 'then', 'there', 'what'])
+        # set_to_remove = set(['!','%','&','[',']','^'])
+
         df['titleID_list'] = general_multi_proc(str_col_to_list_par, df['titleID'], " ")
         df['titleID_list'] = parallelize_on_rows(df['titleID_list'], make_lower)
+        
+        df['titleID_list'] = df['titleID_list'].apply(lambda x:  custom_clean_tokens(x))
+        
         title_words = general_multi_proc(get_all_cat, df['titleID_list'])
         synonyms = buildCustomLookup(title_words) # this is pretty slow
         title_words = remove_synonym(title_words, synonyms)
         df['titleID_list2'] = general_multi_proc(merge_synonym_par, df['titleID_list'], \
                                              synonyms)
         title_words_df = one_hot_encode_multi(title_words, df['titleID_list2'])
-        title_words_df = threshold_sparse_df(title_words_df, 10)
+        title_words_df = threshold_sparse_df(title_words_df, 20)
         return title_words_df
     
     def process_authors(df):
@@ -714,26 +815,77 @@ def process_cols(df, svd = False):
         df['Authors_list'] = parallelize_on_rows(df['Authors_list'], make_lower)
         authors = general_multi_proc(get_all_cat, df['Authors_list'])
         author_df = one_hot_encode_multi(authors, df['Authors_list'])
-        author_df = threshold_sparse_df(author_df, 5)
+        author_df = threshold_sparse_df(author_df, 2)
     
         return author_df
+    
+    def process_author_ids(df):
+    
+        df['Author_id_list'] = general_multi_proc(str_col_to_list_par, df['author_ids'], " ")
+        df['Author_id_list'] = parallelize_on_rows(df['Author_id_list'], make_lower)
+        authors = general_multi_proc(get_all_cat, df['Author_id_list'])
+        author_id_df = one_hot_encode_multi(authors, df['Author_id_list'])
+        author_id_df = threshold_sparse_df(author_id_df, 5)
+    
+        return author_id_df
     
     def process_journals(df):
         temp = set(['a'])
         #journal_df = one_hot_encode(df['Journal'], temp) doesn't work
+        df['Journal'] = df['Journal'].apply(lambda x: clean_journal(x))
         journal_df = pd.get_dummies(df['Journal'], sparse = True)
         print('got dummies journal')
-        journal_df = threshold_sparse_df(journal_df, 5)
+        journal_df = threshold_sparse_df(journal_df, 7)
         return journal_df
 
-    def do_svd(sparse_df):
+    def process_year(df):
+        years = np.linspace(1990,2021,32).astype(int).tolist()
+        years = [str(i) for i in years]
+        years = set(years)
+        df['year'] = df['year'].astype(str)
+        return pd.get_dummies(df['year'].apply(lambda x: clean_year(x, years)), \
+                              sparse = True)
+        
+    def process_publisher(df):
+        publisher_df = pd.get_dummies(df['publisher'], sparse = True)
+        #print('got dummies journal')
+        publisher_df = threshold_sparse_df(publisher_df, 5)
+        return publisher_df
+    
+    def process_pages(df):
+        # if the page numbers are anything other than "can't read from scrapper"
+        # return 1, else 0
+        def custom1(x):
+            if x == 'cant read from scrapper out' or x == "couldnt find":
+                return 1
+            else: 
+                return 0
+            
+        cats = ['pages', 'vol', 'issue']
+        for cat in cats:
+            df[cat] = df[cat].apply(lambda x: custom1(x))
+        
+        return df[cats].astype((pd.SparseDtype("int", 0)))
+        
+    
+    
+    def do_svd(sparse_df, n_comp):
         from sklearn.decomposition import TruncatedSVD
-        svd = TruncatedSVD(100)
+        svd = TruncatedSVD(n_comp)
         
         sparse_mat = sparse_df.sparse.to_coo()
         X_svd = svd.fit_transform(sparse_mat)
         
         return X_svd
+
+    def sort_by_date(df):
+        """ sort the outpput by date and return the sparse, print which row the "test data"
+            starts on"
+        """
+        
+        idx_start = df.date.eq(test_date).idxmax()
+        #idx_end = df.date.eq('2020-04-01').idxmax()
+        return idx_start
 
     def save_outputs(svd):
         
@@ -745,8 +897,9 @@ def process_cols(df, svd = False):
             col_names = sparse_df.columns.to_list()
             bow_mat_X = sparse_df.sparse.to_coo()
             bow_mat_X = bow_mat_X.tocsc()
-            fList = [col_names, labels, paper_ids]
-            nList = ["col_names", "labels", "paper_ids"]
+            idx = sort_by_date(df)
+            fList = [col_names, labels, paper_ids, idx]
+            nList = ["col_names", "labels", "paper_ids", "idx"]
             path = outLoc + '//' + 'bow_mat_X.npz'  
             scipy.sparse.save_npz(path, bow_mat_X)
         
@@ -759,19 +912,58 @@ def process_cols(df, svd = False):
 
     sparse_df = process_title(df).join(process_journals(df), lsuffix='_left', rsuffix='_right')
     sparse_df = sparse_df.join(process_authors(df), lsuffix='_left', rsuffix='_right')
+    sparse_df = sparse_df.join(process_year(df), lsuffix='_left', rsuffix='_right')
+    sparse_df = sparse_df.join(process_author_ids(df), lsuffix='_left', rsuffix='_right')
+    sparse_df = sparse_df.join(process_publisher(df), lsuffix='_left', rsuffix='_right')
+    sparse_df = sparse_df.join(process_pages(df), lsuffix='_left', rsuffix='_right')
     # converting to sparse 
 
     if svd == True:
-        X_svd = do_svd(sparse_df)
+        X_svd = do_svd(sparse_df, 100)
 
     save_outputs(svd)
 
     return None
+
+def add_author_ids(df):
+    """ loads pickle with latest author id, adds these ids to the df
+        as a list in a column
+    """
+    
+    def attach_authorIds(x):
+        if x['titleID'] in authors_by_paper:
+            return authors_by_paper[x['titleID']]
+        else:
+            return 'None'
+        
+    path = os.getcwd()
+    path += "//data_subset//" + "authors_for_paper.pickle"
+    
+    with open(path, 'rb') as f:
+        authors_by_paper = pickle.load(f)
+    
+    df['author_ids'] = df.apply(attach_authorIds, axis = 1)
+    
+    return df
+    #trying to use a series is really slow, idk why
+    # index = []
+    # vals = []
+    # for key, value in authors_by_paper.items():
+    #     index.append(key)
+    #     vals.append(vals)
+    #s_authors = pd.Series(data = vals, index = index)
+    #df = df.join(s_authors)
+    
+def is_float(x):
+    if isinstance(x, float):
+        return True
+    else:
+        return False
     
 def run_script():
     """runs everything in if __name__ == "__main__"
         want to be able to call this whole process from the build model predict script
-    
+
 
     Returns
     -------
@@ -779,10 +971,28 @@ def run_script():
 
     """
     
-    file_name = "batteries__15-04-2021 22_33_32.csv"
+    file_name = "df_select_06_5-4.csv"
     cwd = os.getcwd()
-    path = cwd + "\\data_subsets\\"
+    path = cwd + "\\data_subset\\"
     df = pd.read_csv(path + file_name)
+    
+    cols_to_drop = ['Unnamed: 0', 'title_main', 'Conference', 'Source', 'book', \
+                'urlID', 'citedYear']
+    df = df.drop(labels = cols_to_drop, axis = 1)
+    
+    df['year'] = df['year'].astype(int)
+    df = df[df['date'] < '2020-04-01']
+    df = df.sort_values(by = ['date']) ### added this to manually select the more recent articles ad the test set
+    df = df.reset_index()
+    
+    df['year'] = df['year'].astype(str)
+    df = add_author_ids(df)
+    
+    cols_to_str = ['Journal', 'Authors']
+    for col in cols_to_str:
+        df[col] = df[col].astype(str)
+    #df = df.sample(frac = 1) # commented this out 4-29
+    
     #df = df.iloc[0:1000]
     #df = df.iloc[0:1000]
     
@@ -790,22 +1000,21 @@ def run_script():
     #df = df.iloc[0:10000]
     
     ### droping some cols we aren't using in the hopes that this runs faster
-    cols_to_drop = ['Unnamed: 0', 'title_main', 'Conference', 'Source', 'book', \
-                    'publisher', 'vol', 'issue', 'pages', 'urlID', 'citedYear']
     
-    df = df.drop(labels = cols_to_drop, axis = 1)
     
-    df.reset_index()
-    categorical_features = ['year','Authors','Journal']
+    
+    #df.reset_index()
+    #categorical_features = ['year','Authors','Journal']
+    test_date = '2019-05-01'
     
     df = df[(df['cites_per_year'] != np.inf) & (df['cites_per_year'] != -np.inf)]
     
-    process_cols(df)
+    process_cols(df, test_date)
     
     
+        
     
     
-
 if __name__ == "__main__":
     ############ load the data, keeping the ids col as a str
     #df_list = load_all_dfs("cleaned_data")
