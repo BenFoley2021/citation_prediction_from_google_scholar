@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+	.circle1 {
+	  height: 25px;
+	  width: 25px;
+	  background-color: #169;
+	  border-radius: 50%;
+	}
+	.circle2 {
+	  height: 25px;
+	  width: 25px;
+	  background-color: #555;
+	  border-radius: 50%;
+	}
+	
+	.circle3 {
+	  height: 25px;
+	  width: 25px;
+	  background-color: #762;
+	  border-radius: 50%;
+	}
+	
+	h2 {
+  font-size: 30px;
+}
+	
+</style>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+    <meta name="description" content="---">
+    <meta name="author" content="copied from Alice Allafort">
+    <meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests">
+    <title>Bens test thing</title>
+    <!-- Bootstrap core CSS -->
+    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap.min.css">
+  </head>
+  <body>    
+    <div class="container">
+      <h2>Most Important Updates {{ingredients_kw}} </h2>
+      <table class="list-group">
+          <tr>
+            {% for recipe in recipe_list: %}
+			<li class="list-group-item">
+				<div class="{{recipe['rank']}}" {background-color: #159}></div>
+				<a href = "https://scholar.google.com/citations?user=QAh8HMsAAAAJ&hl=en&oi=sra#d=gs_md_cita-d&u=%2Fcitations%3Fview_op%3Dview_citation%26hl%3Den%26user%3DQAh8HMsAAAAJ%26citation_for_view%3DQAh8HMsAAAAJ%3AMXK_kJrjxJIC%26tzom%3D420" 
+					 style="font-size: 25px; text-decoration: none">
+				{{recipe['title']}} </a>
+				
+			</li>
+                    {% for ing in recipe['other_info']: %}
+                        {{ing}} <br>
+                    {% endfor %}
+                </div>
+                <br>
+                </div>
+            </td>
+              {% endfor %}
+          </tr>
+      </table>
+    </div>
+    <!-- Bootstrap core JavaScript
+    ================================================== -->
+    <!-- Placed at the end of the document so the pages load faster -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.2.1/jquery.js"></script>
+    <script src="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/js/bootstrap.min.js"></script>
+  </body>
+</html>
