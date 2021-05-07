@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<meta charset="UTF-8">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+    <meta name="description" content="---">
+    <meta name="author" content="copied from Alice Allafort">
+    <meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests">
+    <title>Bens test thing</title>
+    <!-- Bootstrap core CSS -->
+    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap.min.css">
+  </head>
+  <body>    
+    <div class="container">
+      <h2>Most Important Updates {{ingredients_kw}} </h2>
+      <table class="list-group">
+          <tr>
+            {% for recipe in recipe_list: %}
+			<li class="list-group-item">{{recipe['title']}}</li>
+                    {% for ing in recipe['other_info']: %}
+                        {{ing}} <br>
+                    {% endfor %}
+                </div>
+                <br>
+                </div>
+            </td>
+              {% endfor %}
+          </tr>
+      </table>
+    </div>
+    <!-- Bootstrap core JavaScript
+    ================================================== -->
+    <!-- Placed at the end of the document so the pages load faster -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.2.1/jquery.js"></script>
+    <script src="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/js/bootstrap.min.js"></script>
+  </body>
+</html>
