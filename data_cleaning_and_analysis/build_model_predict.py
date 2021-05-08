@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """
 Created on Mon Feb  1 20:20:04 2021
+5/6 its reading the index wrong, or the index is being saved wrong, idk why
+
 5/4 things to try: https://pythonhealthcare.org/2019/04/12/122-oversampling-to-correct-for-imbalanced-data-using-naive-sampling-or-smote/#:~:text=SMOTE%20with%20continuous%20variables,point%20in%20to%20the%20sample.
 
 5/2
@@ -827,24 +829,20 @@ def run_xgb_pipe_classify():
     #y = y.reshape(-1,1)
     # X_train, X_test, y_train, y_test = train_test_split(\
     #                 X, y, test_size=0.2, random_state=0)
-        
-
-    
     #y = y + 3
 
     X_train, X_test, y_train, y_test, keys_train, keys_test = manTTS(keys, X, y, idx)
-    w = (y_train+1)**0.2
+    w = (y_train+1)**0.3
     y_train = set_classes(y_train, 10, 10)
     y_test = set_classes(y_test, 10, 10)
     #X_train, X_test, y_weight, y_weight_test, keys_train, keys_test = manTTS(keys, X, y_weight, idx)
     # train and fit the svd transformer
-    svd = TruncatedSVD(6000)
+    svd = TruncatedSVD(1000)
     
     #w = y_weight# switched to oversampling
     X_train = svd.fit_transform(X_train)
     X_test = svd.transform(X_test)
     #X_train, y_train = oversample(X_train, y_train, 'smote')
-    
     
     print('explained variance ratio is ' + str(sum(svd.explained_variance_ratio_)))
     data_dmatrix = xgb.DMatrix(data=X_train, label=y_train)

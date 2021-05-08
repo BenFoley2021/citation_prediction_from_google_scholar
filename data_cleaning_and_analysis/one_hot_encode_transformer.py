@@ -6,17 +6,10 @@ rewritting this as a transformer
 
 input is the dataframe
 
-design consideration: do everything in series, like custom lemmatization and such first?
-    do these actually have any hyper parameter? no.
-        just throw them in with the columns transformers
-
-each df col done in parallel:
-    params from fitting are the cats for each thing.
-    hyper params are thresholding, maybe cols to use
-    
+the multiprocessing is causing problems, haven't narrowed it down beyond that
 
 
-transformer 1: 
+
 
 @author: Ben Foley
 """
@@ -37,14 +30,203 @@ from functools import partial
 import os
 import pickle
 from sklearn import base
+from sklearn import base
+
+class MainTransformer(base.BaseEstimator, base.TransformerMixin):
+    
+    def __init__(self, transformers):
+        # self.process_title = transformers['title_transformer']
+        # self.process_authors = transformers['author_transformer']
+        # self.process_journal = transformers['journal_transformer']
+        # self.process_publisher = transformers['publisher_transformer']
+        # self.process_pages = transformers['pages_transformer']
+        # self.process_year = transformers['year_transformer']
+        # self.transformers_present = set()
+        # self.transformers = {}
+        # for key, val in transformers.items():
+        #     if val:
+        #         self.transformers_present.add(key)
+        #         self.transformers[key] = val
+    
+        self.transformer = transformers['title_transformer']
+        
+    def fit(self, df, y = None):
+
+        # for transformer in self.transformers:
+        #     self.transformers[transformer].fit(df)
+        self.transformer.fit(df, y)
+        print('fit transformer')
+        
+    def transform(self, df):
+        # count = 0
+        # for transformer in self.transformers_present:
+        #     if count == 0:
+        #         sparse_df = self.transformer.transform(df)
+        #         count += 1
+        #     else:
+        #         sparse_df = sparse_df.join(self.transformer.transform(df), \
+        #                                    lsuffix='_left', rsuffix='_right')
+        
+        sparse_df = self.transformer.transform(df)
+        print('transformed df')
+        return sparse_df
+
+class TitleTransformer(base.BaseEstimator, base.TransformerMixin):
+    def __init__(self):
+        self.title_words = None
+        self.synonyms = None
+    
+    def fit(self, df, y = None):
+        # the first portion of the process_title function one_hot_encode_parrallel
+        df['titleID_list'] = general_multi_proc(str_col_to_list_par, df['titleID'], " ")
+        df['titleID_list'] = parallelize_on_rows(df['titleID_list'], make_lower)
+        
+        df['titleID_list'] = df['titleID_list'].apply(lambda x:  custom_clean_tokens(x))
+        
+        self.title_words = general_multi_proc(get_all_cat, df['titleID_list'])
+        self.synonyms = buildCustomLookup(self.title_words) # this is pretty slow
+        self.title_words = remove_synonym(self.title_words, self.synonyms)
+        df['titleID_list2'] = general_multi_proc(merge_synonym_par, df['titleID_list'], \
+                                             self.synonyms)
+
+        print('fit title transformer')
+
+    def transform(self, df, y = None):
+        # the first portion process_title function one_hot_encode_parrallel
+        # needed to return the transformed data
+        df['titleID_list'] = general_multi_proc(str_col_to_list_par, df['titleID'], " ")
+        df['titleID_list'] = parallelize_on_rows(df['titleID_list'], make_lower)
+        
+        df['titleID_list'] = df['titleID_list'].apply(lambda x:  custom_clean_tokens(x))
+        
+        title_words_df = one_hot_encode_multi(self.title_words, df['titleID_list2'])
+        title_words_df = threshold_sparse_df(self.title_words, 20)
+
+        print('transformed title words')
+        return title_words_df
+
+class runXGB(base.BaseEstimator, base.TransformerMixin):
+    def __init__(self):
+        self.model = XGBClassifier()
+        self.svd = None
+        self.keys = None
+        
+    def fit(self, X, y):
+        #X2, y2, keys, idx = fetch_data()
+        idx = 500
+        self.keys = X.index.to_list()
+        X = X.sparse.to_coo()
+        X_train, X_test, y_train, y_test, keys_train, keys_test = manTTS(self.keys, X, y, idx)
+        y_train = set_classes(y_train, 10, 10)
+        y_test = set_classes(y_test, 10, 10)
+        #X_train, X_test, y_weight, y_weight_test, keys_train, keys_test = manTTS(keys, X, y_weight, idx)
+        # train and fit the svd transformer
+        self.svd = TruncatedSVD(6000)
+        
+        #w = y_weight# switched to oversampling
+        X_train = self.svd.fit_transform(X_train)
+        
+        #X_train, y_train = oversample(X_train, y_train, 'smote')
+        
+        
+        print('explained variance ratio is ' + str(sum(self.svd.explained_variance_ratio_)))
+        data_dmatrix = xgb.DMatrix(data=X_train, label=y_train)
+
+        eval_set = [(X_test, y_test)]
+        self.model.fit(X_train, y_train, early_stopping_rounds=15,
+                          verbose = 2, eval_set = eval_set)
+                          # try aucpr
+
+    def predict(self, X_test, y_test):
+        X_test = self.svd.transform(X_test)
+        data_dmatrix_X_test = xgb.DMatrix(data=X_test)
+        preds = self.model.predict(X_test)
+        
+        import numpy as np
+        from sklearn.metrics import precision_score, recall_score, accuracy_score
+        
+        preds = self.model.predict(X_test)
+        best_preds = np.asarray([np.argmax(line) for line in preds])
+        
+        print("Precision = {}".format(precision_score(y_test, best_preds, average='macro')))
+        print("Recall = {}".format(recall_score(y_test, best_preds, average='macro')))
+        print("Accuracy = {}".format(accuracy_score(y_test, best_preds)))
+        print(classification_report(y_test,preds))
+        custom_metrics(preds)
+        #res_analysis(preds, y_test, keys_test)
+
+    def manTTS(self, keys,X,y, ind): 
+    
+        Xm_train = X[0:ind,:]
+        Xm_test = X[ind:-1,:]
+        
+        ym_train = y[0:ind]
+        ym_test = y[ind:-1]
+        
+        keys_train = keys[0:ind]
+        keys_test = keys[ind:-1]
+        
+        
+        return Xm_train, Xm_test, ym_train, ym_test, keys_train, keys_test
+
+    def custom_metrics(self, preds):
+    #want to know how many papers we weeded out 
+        counter = 0
+        for i, thing in enumerate(preds):
+            if type(thing) == np.float64:
+                if int(thing) == 1:
+                    counter += 1
+            else:
+                if thing[1] > thing[0]:
+                    counter += 1
+        print('left with ' + str(counter/len(preds)) + " fraction of things")
+
+
+    def set_classes(self, y: np.array, thresh1: float, thresh2: float):
+        """ sets any y above a threshold to 1, anything below to 1
+        """
+        y_class = np.zeros(y.shape)
+        for i, thing in enumerate(y):
+            if thing > thresh2:
+                y_class[i] = 1
+            elif thing > thresh1:
+                y_class[i] = 1
+            else:
+                y[i] = 0
+        
+        return y_class
 
 
 
 
+def prep_df(file_name):
+    
 
+    cwd = os.getcwd()
+    path = cwd + "\\data_subset\\"
+    df = pd.read_csv(path + file_name)
+    
+    cols_to_drop = ['Unnamed: 0', 'title_main', 'Conference', 'Source', 'book', \
+                'urlID', 'citedYear']
+    df = df.drop(labels = cols_to_drop, axis = 1)
+    
+    df['year'] = df['year'].astype(int)
+    df = df[df['date'] < '2020-04-01']
+    df = df.sort_values(by = ['date']) ### added this to manually select the more recent articles ad the test set
+    df = df.reset_index()
+    
+    df['year'] = df['year'].astype(str)
+    df = add_author_ids(df)
+    
+    cols_to_str = ['Journal', 'Authors']
+    for col in cols_to_str:
+        df[col] = df[col].astype(str)
+    
+    df = df[(df['cites_per_year'] != np.inf) & (df['cites_per_year'] != -np.inf)]
 
+    y = df['cites_per_year'].to_numpy()
 
-
+    return df, y
 
 def getTok2(dfIn, col, col_2_write):
     """ Using spacy to get the tokens from the title
@@ -1020,12 +1202,23 @@ def run_script():
     
     
 if __name__ == "__main__":
-    ############ load the data, keeping the ids col as a str
-    #df_list = load_all_dfs("cleaned_data")
+    from sklearn.pipeline import Pipeline
+    import xgboost as xgb
+    from sklearn.decomposition import TruncatedSVD
+    from typing import Tuple
+    import numpy as np
+    from sklearn.metrics import classification_report,confusion_matrix
     
-    # # for testing we want this to run fast
-    #df_list = df_list[0:1]
+    import xgboost as xgb
+    from xgboost import XGBClassifier
     
-    #df = cat_dfs(df_list)
-    run_script()
+    pipe = Pipeline([
+        ('main_transformer', MainTransformer({'title_transformer': TitleTransformer()})),
+        ('predictor', runXGB())
+    ])
+
+    df, y = prep_df("df_select_smaller_5-4.csv")
+
+    pipe.fit(X = df, y = y)
+    
 

@@ -884,6 +884,12 @@ def process_cols(df, test_date, svd = False):
         """
         
         idx_start = df.date.eq(test_date).idxmax()
+        # if idx_start == 0:
+        # day = 1
+        # while idx_start ==0:
+        #     new_date = 
+        
+        
         #idx_end = df.date.eq('2020-04-01').idxmax()
         return idx_start
 
@@ -899,7 +905,7 @@ def process_cols(df, test_date, svd = False):
             bow_mat_X = bow_mat_X.tocsc()
             idx = sort_by_date(df)
             fList = [col_names, labels, paper_ids, idx]
-            nList = ["col_names", "labels", "paper_ids", "idx"]
+            nList = ["col_names", "labels", "paper_ids", "year_idx"]
             path = outLoc + '//' + 'bow_mat_X.npz'  
             scipy.sparse.save_npz(path, bow_mat_X)
         
@@ -981,6 +987,7 @@ def run_script():
     df = df.drop(labels = cols_to_drop, axis = 1)
     
     df['year'] = df['year'].astype(int)
+    df['date'] = df['date'].apply(lambda x: x.split(' ')[0])
     df = df[df['date'] < '2020-04-01']
     df = df.sort_values(by = ['date']) ### added this to manually select the more recent articles ad the test set
     df = df.reset_index()
@@ -1005,7 +1012,7 @@ def run_script():
     
     #df.reset_index()
     #categorical_features = ['year','Authors','Journal']
-    test_date = '2019-05-01'
+    test_date = '2019-09-01'
     
     df = df[(df['cites_per_year'] != np.inf) & (df['cites_per_year'] != -np.inf)]
     

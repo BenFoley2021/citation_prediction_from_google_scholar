@@ -185,10 +185,10 @@ if __name__ == "__main__":
     
     fraction_correct_and_order(res_dict_to_read)
     
-    # df_file_name = 'data_sent_to_model.csv'
+    df_file_name = 'df_to_lead_test.csv'
     
-    # df2 = setUp(df_file_name, res_dict_to_read)
-    # df2['relativeRes'] = df2.apply(getRelativeRes, axis =1)
+    df2 = setUp(df_file_name, res_dict_to_read)
+    #df2['relativeRes'] = df2.apply(getRelativeRes, axis =1)
 
     # df2 = make_shuffle_rel_res(df2)
     
