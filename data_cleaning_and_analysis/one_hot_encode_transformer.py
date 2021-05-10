@@ -77,30 +77,61 @@ class TitleTransformer(base.BaseEstimator, base.TransformerMixin):
         self.synonyms = None
     
     def fit(self, df, y = None):
-        # the first portion of the process_title function one_hot_encode_parrallel
-        df['titleID_list'] = general_multi_proc(str_col_to_list_par, df['titleID'], " ")
-        df['titleID_list'] = parallelize_on_rows(df['titleID_list'], make_lower)
+        
+        
+        df['titleID_list'] = str_col_to_list_par(" ", df['titleID'])
+        
+        #df['titleID_list'] = parallelize_on_rows(df['titleID_list'], make_lower)
+        
+        df['titleID_list'] = df['titleID_list'].apply(lambda x: make_lower(x))
         
         df['titleID_list'] = df['titleID_list'].apply(lambda x:  custom_clean_tokens(x))
         
-        self.title_words = general_multi_proc(get_all_cat, df['titleID_list'])
+        #title_words = general_multi_proc(get_all_cat, df['titleID_list'])
+        
+        self.title_words = get_all_cat(df['titleID_list'])
+        
         self.synonyms = buildCustomLookup(self.title_words) # this is pretty slow
-        self.title_words = remove_synonym(self.title_words, self.synonyms)
-        df['titleID_list2'] = general_multi_proc(merge_synonym_par, df['titleID_list'], \
-                                             self.synonyms)
+        title_words = remove_synonym(self.title_words, self.synonyms)
+            
+        df['titleID_list2'] = merge_synonym_par(self.synonyms, df['titleID_list'])
+            
+        title_words_df = one_hot_encode_multi(self.title_words, df['titleID_list2'])
+        
+        
+        ########################
+        # # the first portion of the process_title function one_hot_encode_parrallel
+        # df['titleID_list'] = general_multi_proc(str_col_to_list_par, df['titleID'], " ")
+        # df['titleID_list'] = parallelize_on_rows(df['titleID_list'], make_lower)
+        
+        # df['titleID_list'] = df['titleID_list'].apply(lambda x:  custom_clean_tokens(x))
+        
+        # self.title_words = general_multi_proc(get_all_cat, df['titleID_list'])
+        # self.synonyms = buildCustomLookup(self.title_words) # this is pretty slow
+        # self.title_words = remove_synonym(self.title_words, self.synonyms)
+        # df['titleID_list2'] = general_multi_proc(merge_synonym_par, df['titleID_list'], \
+        #                                      self.synonyms)
 
         print('fit title transformer')
 
     def transform(self, df, y = None):
         # the first portion process_title function one_hot_encode_parrallel
         # needed to return the transformed data
-        df['titleID_list'] = general_multi_proc(str_col_to_list_par, df['titleID'], " ")
-        df['titleID_list'] = parallelize_on_rows(df['titleID_list'], make_lower)
+        df['titleID_list'] = str_col_to_list_par(" ", df['titleID'])
+        
+        #df['titleID_list'] = parallelize_on_rows(df['titleID_list'], make_lower)
+        
+        df['titleID_list'] = df['titleID_list'].apply(lambda x: make_lower(x))
         
         df['titleID_list'] = df['titleID_list'].apply(lambda x:  custom_clean_tokens(x))
-        
+
+            
+        df['titleID_list2'] = merge_synonym_par(self.synonyms, df['titleID_list'])
+            
         title_words_df = one_hot_encode_multi(self.title_words, df['titleID_list2'])
-        title_words_df = threshold_sparse_df(self.title_words, 20)
+        
+        title_words_df = threshold_sparse_df(title_words_df, 20)
+        
 
         print('transformed title words')
         return title_words_df
@@ -981,17 +1012,30 @@ def process_cols(df, test_date, svd = False):
         # stop_words = set(['the', 'a', 'to', 'with', 'for', 'then', 'there', 'what'])
         # set_to_remove = set(['!','%','&','[',']','^'])
 
-        df['titleID_list'] = general_multi_proc(str_col_to_list_par, df['titleID'], " ")
-        df['titleID_list'] = parallelize_on_rows(df['titleID_list'], make_lower)
+        #df['titleID_list'] = general_multi_proc(str_col_to_list_par, df['titleID'], " ")
+        
+        df['titleID_list'] = str_col_to_list_par(" ", df['titleID'])
+        
+        #df['titleID_list'] = parallelize_on_rows(df['titleID_list'], make_lower)
+        
+        df['titleID_list'] = df['titleID_list'].apply(lambda x: make_lower(x))
         
         df['titleID_list'] = df['titleID_list'].apply(lambda x:  custom_clean_tokens(x))
         
-        title_words = general_multi_proc(get_all_cat, df['titleID_list'])
+        #title_words = general_multi_proc(get_all_cat, df['titleID_list'])
+        
+        title_words = get_all_cat(df['titleID_list'])
+        
         synonyms = buildCustomLookup(title_words) # this is pretty slow
         title_words = remove_synonym(title_words, synonyms)
+        
         df['titleID_list2'] = general_multi_proc(merge_synonym_par, df['titleID_list'], \
                                              synonyms)
+            
+        df['titleID_list2'] = merge_synonym_par(synonyms, df['titleID_list'])
+            
         title_words_df = one_hot_encode_multi(title_words, df['titleID_list2'])
+        
         title_words_df = threshold_sparse_df(title_words_df, 20)
         return title_words_df
     
@@ -1211,6 +1255,8 @@ if __name__ == "__main__":
     
     import xgboost as xgb
     from xgboost import XGBClassifier
+    
+    #run_script()
     
     pipe = Pipeline([
         ('main_transformer', MainTransformer({'title_transformer': TitleTransformer()})),

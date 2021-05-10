@@ -832,17 +832,17 @@ def run_xgb_pipe_classify():
     #y = y + 3
 
     X_train, X_test, y_train, y_test, keys_train, keys_test = manTTS(keys, X, y, idx)
-    w = (y_train+1)**0.3
+    #w = (y_train+1)**0.3
     y_train = set_classes(y_train, 10, 10)
     y_test = set_classes(y_test, 10, 10)
     #X_train, X_test, y_weight, y_weight_test, keys_train, keys_test = manTTS(keys, X, y_weight, idx)
     # train and fit the svd transformer
-    svd = TruncatedSVD(1000)
+    svd = TruncatedSVD(4500)
     
     #w = y_weight# switched to oversampling
     X_train = svd.fit_transform(X_train)
     X_test = svd.transform(X_test)
-    #X_train, y_train = oversample(X_train, y_train, 'smote')
+    X_train, y_train = oversample(X_train, y_train, 'smote')
     
     print('explained variance ratio is ' + str(sum(svd.explained_variance_ratio_)))
     data_dmatrix = xgb.DMatrix(data=X_train, label=y_train)
@@ -856,7 +856,7 @@ def run_xgb_pipe_classify():
     model = XGBClassifier()
     eval_set = [(X_test, y_test)]
     model.fit(X_train, y_train, early_stopping_rounds=15,
-                      verbose = 2, eval_set = eval_set, sample_weight=w)
+                      verbose = 2, eval_set = eval_set)
                       # try aucpr
     data_dmatrix_X_test = xgb.DMatrix(data=X_test)
     preds = model.predict(X_test)
@@ -946,7 +946,7 @@ def run_xgb_pipe():
     
     #X_train, X_test, y_weight, y_weight_test, keys_train, keys_test = manTTS(keys, X, y_weight)
     # train and fit the svd transformer
-    svd = TruncatedSVD(1500)
+    svd = TruncatedSVD(5000)
     
     #w = y_weight switched to oversampling
     X_train = svd.fit_transform(X_train)
@@ -1056,7 +1056,7 @@ def res_analysis(preds, y_test, keys_test):
 if __name__ == '__main__':
     
     #run_script()
-    run_pipe = run_xgb_pipe_classify()
+    run_pipe = run_xgb_pipe()
 
     # saving resDict
 

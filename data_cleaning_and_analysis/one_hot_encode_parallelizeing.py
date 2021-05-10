@@ -1016,6 +1016,8 @@ def run_script():
     
     df = df[(df['cites_per_year'] != np.inf) & (df['cites_per_year'] != -np.inf)]
     
+    df.to_csv('latest_df_to_ML.csv')
+    
     process_cols(df, test_date)
     
     

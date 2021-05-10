@@ -23,7 +23,7 @@ os.getcwd()
 def putResInDf(df,resDict):
     
     df['pred'] = df['index1'].apply(lambda x: resDict[x][0])
-    df['actual'] = df['index1'].apply(lambda x: resDict[x][1][0])
+    df['actual'] = df['index1'].apply(lambda x: resDict[x][1])
     df['res'] = df['actual'] - df['pred']
 
     return df
@@ -152,7 +152,7 @@ def two_d_scatter(df, x_lims, y_lims, hue = None):
     plt.ylim(y_lims[0], y_lims[1])
     
     
-def fraction_correct_and_order(res_dict_to_read):
+def fraction_correct_and_order(res_dict_to_read, quantile):
     """ Given index, actual, and predicted, do
         calculate the % got correct for a quantile (eg top 10%)
         sort each these for actual and predicted
@@ -165,7 +165,7 @@ def fraction_correct_and_order(res_dict_to_read):
         
     df = pd.DataFrame(dict_to_df).transpose().reset_index()
     df = df.rename(columns = {0: 'preds', 1: 'actual'})
-    quantile = 0.1
+    #quantile = 0.1
     
     # need to get quantiles for actual and predicted
     df = df.sort_values(by = 'actual', ascending = False)
@@ -179,15 +179,61 @@ def fraction_correct_and_order(res_dict_to_read):
     
     return None
     
+
+def package_for_display(df):
+    """ Select which papers are shown to the user, put info into a dictionary
+    """
+    def determine_rank_1(x, row):
+        if x > 1000:
+            return 1
+        elif x > 500:
+            return 2
+        elif x > 15:
+            return 3
+        elif x > 4:
+            return 4
+        else:
+            return 5
+
+    def determine_rank_2(x, i):
+        return i + 1
+
+    def grab_top_10(df):
+        """Returns the 10 papers with the most citations
+        """
+        df = df.sort_values(by = ['pred'], ascending = False)
+        df_out = df.iloc[0:7]
+        
+        return df_out
+    
+    def to_dict_format(df_out):
+        output = []
+        for i, row in df_out.iterrows():
+            #print(row['titleID'])
+            output.append({'title': row['titleID'], 'other_info': [row['Journal'], \
+                                    row['Authors']], 'rank': determine_rank_2(row['cites_per_year'], i)})
+            
+        return output
+    
+    df_out = grab_top_10(df)
+    df_out = df_out.reset_index()
+    return to_dict_format(df_out)
+
 if __name__ == "__main__":
     
     res_dict_to_read = load_one_pickled("res_dct.pckl", "model_related_outputs")
     
-    fraction_correct_and_order(res_dict_to_read)
+    fraction_correct_and_order(res_dict_to_read, 0.05)
     
-    df_file_name = 'df_to_lead_test.csv'
+    df_file_name = 'latest_df_to_ML.csv'
     
     df2 = setUp(df_file_name, res_dict_to_read)
+    
+    output = package_for_display(df2)
+    
+    path  = 'C:\\Users\\bcyk5\\OneDrive\\Documents\\GitHub\\citation_prediction_from_google_scholar\\user interface\\data\\'
+    
+    pickle.dump(output, open(path + 'output_to_ui.pickle', 'wb'))
     #df2['relativeRes'] = df2.apply(getRelativeRes, axis =1)
 
     # df2 = make_shuffle_rel_res(df2)
