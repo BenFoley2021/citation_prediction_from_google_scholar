@@ -13,7 +13,7 @@ from bs4 import BeautifulSoup
 import pickle
 
 
-login_info = pickle.load(open('login_info.pickle', 'wb'))
+login_info = pickle.load(open('login_info.pickle', 'rb'))
 
 
 driver = webdriver.Chrome('./chromedriver')

@@ -2,13 +2,15 @@
 """
 Created on Sat Jan 30 16:53:58 2021
 
+5/10, fixed error, .fit needs to return self
+
+
+
 rewritting this as a transformer
 
 input is the dataframe
 
 the multiprocessing is causing problems, haven't narrowed it down beyond that
-
-
 
 
 @author: Ben Foley
@@ -34,41 +36,42 @@ from sklearn import base
 
 class MainTransformer(base.BaseEstimator, base.TransformerMixin):
     
-    def __init__(self, transformers):
+    def __init__(self, transformers: dict):
         # self.process_title = transformers['title_transformer']
         # self.process_authors = transformers['author_transformer']
         # self.process_journal = transformers['journal_transformer']
         # self.process_publisher = transformers['publisher_transformer']
         # self.process_pages = transformers['pages_transformer']
         # self.process_year = transformers['year_transformer']
-        # self.transformers_present = set()
-        # self.transformers = {}
-        # for key, val in transformers.items():
-        #     if val:
-        #         self.transformers_present.add(key)
-        #         self.transformers[key] = val
+        self.transformers_present = set()
+        self.transformers = {}
+        for key, val in transformers.items():
+            if val:
+                self.transformers_present.add(key)
+                self.transformers[key] = val
     
-        self.transformer = transformers['title_transformer']
+        #self.transformer = transformers['title_transformer']
         
     def fit(self, df, y = None):
 
         # for transformer in self.transformers:
         #     self.transformers[transformer].fit(df)
-        self.transformer.fit(df, y)
-        print('fit transformer')
+        for transformer in self.transformers_present:
+            self.transformers[transformer].fit(df)
+        print('fit transformers')
+        return self
         
-    def transform(self, df):
-        # count = 0
-        # for transformer in self.transformers_present:
-        #     if count == 0:
-        #         sparse_df = self.transformer.transform(df)
-        #         count += 1
-        #     else:
-        #         sparse_df = sparse_df.join(self.transformer.transform(df), \
-        #                                    lsuffix='_left', rsuffix='_right')
-        
-        sparse_df = self.transformer.transform(df)
-        print('transformed df')
+    def transform(self, df, y = None):
+        count = 0
+        for transformer in self.transformers_present:
+            if count == 0:
+                sparse_df = self.transformers[transformer].transform(df)
+                count += 1
+            else:
+                sparse_df = sparse_df.join(self.transformers[transformer].transform(df), \
+                                            lsuffix='_left', rsuffix='_right')
+        # sparse_df = self.transformer.transform(df)
+        # print('transformed df')
         return sparse_df
 
 class TitleTransformer(base.BaseEstimator, base.TransformerMixin):
@@ -92,27 +95,19 @@ class TitleTransformer(base.BaseEstimator, base.TransformerMixin):
         self.title_words = get_all_cat(df['titleID_list'])
         
         self.synonyms = buildCustomLookup(self.title_words) # this is pretty slow
-        title_words = remove_synonym(self.title_words, self.synonyms)
+        self.title_words = remove_synonym(self.title_words, self.synonyms)
             
         df['titleID_list2'] = merge_synonym_par(self.synonyms, df['titleID_list'])
             
         title_words_df = one_hot_encode_multi(self.title_words, df['titleID_list2'])
+        title_words_df = threshold_sparse_df(title_words_df, 20)
         
+        self.title_words = set(title_words_df.columns)
         
-        ########################
-        # # the first portion of the process_title function one_hot_encode_parrallel
-        # df['titleID_list'] = general_multi_proc(str_col_to_list_par, df['titleID'], " ")
-        # df['titleID_list'] = parallelize_on_rows(df['titleID_list'], make_lower)
-        
-        # df['titleID_list'] = df['titleID_list'].apply(lambda x:  custom_clean_tokens(x))
-        
-        # self.title_words = general_multi_proc(get_all_cat, df['titleID_list'])
-        # self.synonyms = buildCustomLookup(self.title_words) # this is pretty slow
-        # self.title_words = remove_synonym(self.title_words, self.synonyms)
-        # df['titleID_list2'] = general_multi_proc(merge_synonym_par, df['titleID_list'], \
-        #                                      self.synonyms)
 
         print('fit title transformer')
+        
+        return self
 
     def transform(self, df, y = None):
         # the first portion process_title function one_hot_encode_parrallel
@@ -125,17 +120,134 @@ class TitleTransformer(base.BaseEstimator, base.TransformerMixin):
         
         df['titleID_list'] = df['titleID_list'].apply(lambda x:  custom_clean_tokens(x))
 
-            
         df['titleID_list2'] = merge_synonym_par(self.synonyms, df['titleID_list'])
             
         title_words_df = one_hot_encode_multi(self.title_words, df['titleID_list2'])
-        
-        title_words_df = threshold_sparse_df(title_words_df, 20)
-        
 
-        print('transformed title words')
+        #print('transformed title words')
         return title_words_df
 
+class AuthorTransformer(base.BaseEstimator, base.TransformerMixin):
+    def __init__(self):
+        self.authors = None
+        
+    def fit(self, df, y = None):
+        df['Authors_list'] = str_col_to_list_par(",", df['Authors'])
+        df['Authors_list'] = df['Authors_list'].apply(lambda x: make_lower(x))
+        self.authors = get_all_cat(df['Authors_list'])
+        author_df = one_hot_encode_multi(self.authors, df['Authors_list'])
+        author_df = threshold_sparse_df(author_df, 2)
+        
+        self.authors = set(author_df.columns)
+        return self
+    
+    def transform(self, df, y = None):
+        df['Authors_list'] = str_col_to_list_par(",", df['Authors'])
+        df['Authors_list'] = df['Authors_list'].apply(lambda x: make_lower(x))
+        author_df = one_hot_encode_multi(self.authors, df['Authors_list'])
+        return author_df
+
+
+class JournalTransformer(base.BaseEstimator, base.TransformerMixin):
+    def __init__(self):
+        self.journals = None
+
+    def fit(self, df, y = None):
+        
+        df['Journal'] = df['Journal'].apply(lambda x: clean_journal(x))
+        
+        journal_df = pd.get_dummies(df['Journal'], sparse = True)
+        print('got dummies journal')
+        journal_df = threshold_sparse_df(journal_df, 7)
+        
+        self.journals = set(journal_df.columns)
+        
+        return self
+        
+    def transform(self, df, y = None):
+        
+        df['Journal'] = df['Journal'].apply(lambda x: clean_journal(x))
+        df['Journal'] = df['Journal'].apply(lambda x: [x])
+        journal_df = one_hot_encode_multi(self.journals, df['titleID_list2'])
+
+        return journal_df   
+
+class PublisherTransformer(base.BaseEstimator, base.TransformerMixin):
+    def __init__(self):
+        self.publishers = None
+
+    def fit(self, df, y = None):
+        
+        publisher_df = pd.get_dummies(df['publisher'], sparse = True)
+        #print('got dummies journal')
+        publisher_df = threshold_sparse_df(publisher_df, 5)
+        self.publishers = set(publisher_df.columns)
+        return self
+        
+    def transform(self, df, y = None):
+        
+        publisher_df = one_hot_encode_multi(self.publishers, df['publisher'])
+        return publisher_df 
+
+class AuthorIdTransformer(base.BaseEstimator, base.TransformerMixin):
+    def __init__(self):
+        self.author_ids = None
+        
+    def fit(self, df, y = None):
+        
+        # str_col_to_list_par(" ", df['titleID'])
+        
+        df['Author_id_list'] = str_col_to_list_par(" ", df['author_ids'])
+        
+        #df['Author_id_list'] = parallelize_on_rows(df['Author_id_list'], make_lower)
+        
+        author_ids = get_all_cat(df['Author_id_list'])
+        author_id_df = one_hot_encode_multi(author_ids, df['Author_id_list'])
+        author_id_df = threshold_sparse_df(author_id_df, 5)
+        
+        self.author_ids = set(author_id_df.columns)
+        
+        return self
+        
+    def transform(self, df, y = None):
+        
+        df['Author_id_list'] = str_col_to_list_par(" ", df['author_ids'])
+        author_id_df = one_hot_encode_multi(self.author_ids, df['Author_id_list'])
+        return author_id_df
+
+class YearTransformer(base.BaseEstimator, base.TransformerMixin):
+    def __init__(self):
+        years = np.linspace(1990,2021,32).astype(int).tolist()
+        years = [str(i) for i in years]
+        years = set(years)
+        self.years = years
+    
+    def fit(self, df, y = None):
+        return self
+
+    def transform(self, df, y = None):
+        df['year'] = df['year'].astype(str)
+        return pd.get_dummies(df['year'].apply(lambda x: clean_year(x, self.years)), \
+                              sparse = True)
+
+class PageTransformer(base.BaseEstimator, base.TransformerMixin):
+    def __init__(self):
+        pass
+    def fit(self, df, y = None):
+        return self
+    def transform(self, df, y = None):
+        def custom1(x):
+            if x == 'cant read from scrapper out' or x == "couldnt find":
+                return 1
+            else: 
+                return 0
+            
+        cats = ['pages', 'vol', 'issue']
+        for cat in cats:
+            df[cat] = df[cat].apply(lambda x: custom1(x))
+        
+        return df[cats].astype((pd.SparseDtype("int", 0)))
+    
 class runXGB(base.BaseEstimator, base.TransformerMixin):
     def __init__(self):
         self.model = XGBClassifier()
@@ -147,16 +259,17 @@ class runXGB(base.BaseEstimator, base.TransformerMixin):
         idx = 500
         self.keys = X.index.to_list()
         X = X.sparse.to_coo()
+        X = X.tocsr()
         X_train, X_test, y_train, y_test, keys_train, keys_test = manTTS(self.keys, X, y, idx)
         y_train = set_classes(y_train, 10, 10)
         y_test = set_classes(y_test, 10, 10)
         #X_train, X_test, y_weight, y_weight_test, keys_train, keys_test = manTTS(keys, X, y_weight, idx)
         # train and fit the svd transformer
-        self.svd = TruncatedSVD(6000)
+        self.svd = TruncatedSVD(3)
         
         #w = y_weight# switched to oversampling
         X_train = self.svd.fit_transform(X_train)
-        
+        X_test = self.svd.transform(X_test)
         #X_train, y_train = oversample(X_train, y_train, 'smote')
         
         
@@ -167,8 +280,9 @@ class runXGB(base.BaseEstimator, base.TransformerMixin):
         self.model.fit(X_train, y_train, early_stopping_rounds=15,
                           verbose = 2, eval_set = eval_set)
                           # try aucpr
+        return self
 
-    def predict(self, X_test, y_test):
+    def predict(self, X_test):
         X_test = self.svd.transform(X_test)
         data_dmatrix_X_test = xgb.DMatrix(data=X_test)
         preds = self.model.predict(X_test)
@@ -179,53 +293,54 @@ class runXGB(base.BaseEstimator, base.TransformerMixin):
         preds = self.model.predict(X_test)
         best_preds = np.asarray([np.argmax(line) for line in preds])
         
-        print("Precision = {}".format(precision_score(y_test, best_preds, average='macro')))
-        print("Recall = {}".format(recall_score(y_test, best_preds, average='macro')))
-        print("Accuracy = {}".format(accuracy_score(y_test, best_preds)))
-        print(classification_report(y_test,preds))
-        custom_metrics(preds)
+        # print("Precision = {}".format(precision_score(y_test, best_preds, average='macro')))
+        # print("Recall = {}".format(recall_score(y_test, best_preds, average='macro')))
+        # print("Accuracy = {}".format(accuracy_score(y_test, best_preds)))
+        # print(classification_report(y_test,preds))
+        # custom_metrics(preds)
         #res_analysis(preds, y_test, keys_test)
+        return preds
 
-    def manTTS(self, keys,X,y, ind): 
+def manTTS(keys,X,y, ind): 
+
+    Xm_train = X[0:ind,:]
+    Xm_test = X[ind:-1,:]
     
-        Xm_train = X[0:ind,:]
-        Xm_test = X[ind:-1,:]
-        
-        ym_train = y[0:ind]
-        ym_test = y[ind:-1]
-        
-        keys_train = keys[0:ind]
-        keys_test = keys[ind:-1]
-        
-        
-        return Xm_train, Xm_test, ym_train, ym_test, keys_train, keys_test
+    ym_train = y[0:ind]
+    ym_test = y[ind:-1]
+    
+    keys_train = keys[0:ind]
+    keys_test = keys[ind:-1]
+    
+    
+    return Xm_train, Xm_test, ym_train, ym_test, keys_train, keys_test
 
-    def custom_metrics(self, preds):
-    #want to know how many papers we weeded out 
-        counter = 0
-        for i, thing in enumerate(preds):
-            if type(thing) == np.float64:
-                if int(thing) == 1:
-                    counter += 1
-            else:
-                if thing[1] > thing[0]:
-                    counter += 1
-        print('left with ' + str(counter/len(preds)) + " fraction of things")
+def custom_metrics(preds):
+#want to know how many papers we weeded out 
+    counter = 0
+    for i, thing in enumerate(preds):
+        if type(thing) == np.float64:
+            if int(thing) == 1:
+                counter += 1
+        else:
+            if thing[1] > thing[0]:
+                counter += 1
+    print('left with ' + str(counter/len(preds)) + " fraction of things")
 
 
-    def set_classes(self, y: np.array, thresh1: float, thresh2: float):
-        """ sets any y above a threshold to 1, anything below to 1
-        """
-        y_class = np.zeros(y.shape)
-        for i, thing in enumerate(y):
-            if thing > thresh2:
-                y_class[i] = 1
-            elif thing > thresh1:
-                y_class[i] = 1
-            else:
-                y[i] = 0
-        
-        return y_class
+def set_classes(y: np.array, thresh1: float, thresh2: float):
+    """ sets any y above a threshold to 1, anything below to 1
+    """
+    y_class = np.zeros(y.shape)
+    for i, thing in enumerate(y):
+        if thing > thresh2:
+            y_class[i] = 1
+        elif thing > thresh1:
+            y_class[i] = 1
+        else:
+            y[i] = 0
+    
+    return y_class
 
 
 
@@ -1185,6 +1300,8 @@ def add_author_ids(df):
     #df = df.join(s_authors)
     
 def is_float(x):
+    
+
     if isinstance(x, float):
         return True
     else:
@@ -1231,18 +1348,11 @@ def run_script():
     
     ### droping some cols we aren't using in the hopes that this runs faster
     
-    
-    
     #df.reset_index()
     #categorical_features = ['year','Authors','Journal']
     test_date = '2019-05-01'
-    
     df = df[(df['cites_per_year'] != np.inf) & (df['cites_per_year'] != -np.inf)]
-    
     process_cols(df, test_date)
-    
-    
-        
     
     
 if __name__ == "__main__":
@@ -1257,14 +1367,25 @@ if __name__ == "__main__":
     from xgboost import XGBClassifier
     
     #run_script()
+    transformers_to_use = {'TitleTransformer': TitleTransformer(),\
+                           'JournalTransformer': JournalTransformer(),
+                           'AuthorIdTransformer': AuthorIdTransformer(),
+                           'YearTransformer': YearTransformer(),
+                           'PublisherTransformer': PublisherTransformer(),
+                           'PageTransformer': PageTransformer(),
+                           'AuthorTransformer': AuthorTransformer()}
+        
+    transformer = MainTransformer(transformers_to_use)
     
     pipe = Pipeline([
-        ('main_transformer', MainTransformer({'title_transformer': TitleTransformer()})),
+        ('main_transformer', transformer),
         ('predictor', runXGB())
     ])
 
     df, y = prep_df("df_select_smaller_5-4.csv")
 
-    pipe.fit(X = df, y = y)
+    pipe.fit(X = df.copy(), y = y)
     
+    df_test = df.iloc[0:100]
+    test_out = pipe.predict(df_test)
 
