@@ -17,9 +17,9 @@ the multiprocessing is causing problems, haven't narrowed it down beyond that
 """
 from get_data_from_author_crawl import *
 import pandas as pd
-#import spacy
+#import spacy, current implementation doesn't use spacy
 import numpy as np
-import time
+#import time
 import scipy.sparse
 from scipy.sparse import coo_matrix, lil_matrix
 #from generic_func_lib import *
@@ -31,7 +31,6 @@ from multiprocessing import Pool
 from functools import partial
 import os
 import pickle
-from sklearn import base
 from sklearn import base
 from typing import Tuple
 
@@ -473,6 +472,7 @@ def prep_df(df: pd.DataFrame, which = None):
         df = df.reset_index()
         
         df['year'] = df['year'].astype(str)
+        
     df = add_author_ids(df)
     
     cols_to_str = ['Journal', 'Authors']
@@ -486,7 +486,7 @@ def prep_df(df: pd.DataFrame, which = None):
     return df, y
 
 def getTok2(dfIn, col, col_2_write):
-    """ Using spacy to get the tokens from the title
+    """ Using spacy to get the tokens from the title, currently this function isn't used
     """
     tokens = []
     #start = time.time()
@@ -618,28 +618,6 @@ def saveOutput2(fListIn,NListIn,outLoc):
             pickle.dump(vars2Save[i], f)
         f.close()
             
-def dropCust1(dfIn):
-    ### removes the rows for which 'cited' cant be converted to an int
-    def testIfInt(thing):
-        
-        try:
-            int(thing)
-            return True
-        except:
-            return False
-    
-    #
-    dfIn = dfIn[~dfIn['title'].str.contains("Unexpected error: ")] #
-    
-    ########## this needs to be redone using apply instead of iterrows and drop
-    for index, row in dfIn.iterrows():
-        try:
-            if testIfInt(row['cited']) == False or testIfInt(row['year']) == False:
-                dfIn.drop(index, inplace=True)
-        except:
-            print(row)
-            
-    return dfIn
 
 def buildCustomLookup(dicBow):
     # this can probably be done in 1/20 the lines with re 
@@ -769,141 +747,6 @@ def buildCustomLookup(dicBow):
         
     return lookUpDict
 
-def buildCustomLookup2(dicBow):
-    # trying to break this down and make it more readable, clearly havent done it yet
-    # then need to test more throughly and make sure it works
-    def checkSim(word1: str, word2: str) -> list: #returns list of strs
-        """ if similar return true, else false
-        the exact criteria is tricky
-        if word 2 is longer it returns the differnce at the end as part of the list
-        if word 1 is longer it returns none in that place
-        
-        """
-        # if either word is 3 chars or shorter we're not bothering with them
-        word2Long = False
-        if len(word1) < 4 or len(word2) < 4:
-            return [str(),str(),str()]
-        #need to make the longer work word1
-        if len(word2) >= len(word1):
-            word2Long = True
-            wordLong = word2
-            wordShort = word1
-        else:
-            wordLong = word1
-            wordShort = word2
-        
-        #want to get the common part and the difference. get back three strings
-        base = str()
-        wordLongDif = str()
-        wordShortDif = str()
-        count = 0
-        for i, char in enumerate(wordShort): ### looping over shorter word
-            if wordLong[i] == char:
-                count += 1 # keeping track of number of same chars
-                base +=char # if equal then we keep adding to the base
-            else: # if not add to the differences
-                if count < 3: # if we hit a character thats different and theres only 2 that have been the same it's not the same base word, don't need to keep looking
-                    return [str(), str(), str()]
-                else:
-                    wordLongDif += wordLong[i]
-                    wordShortDif += wordShort[i]
-        
-        if len(wordLong) > len(wordShort): # if word1 is longer than 2, put the rest of 1 into word1dif. this is sorta silly since there shouldn't be any duplicate words
-            wordLongDif += wordLong[i+1:]
-        ################## got the differences, now what?
-        if word2Long == True:
-            return [base,wordLongDif, word2]
-        else:
-            return [base,None, word2]
-        
-    def findLemma(wordRegion: list) -> dict: #
-        #lets start with the most basic implementation, compare every word and
-        #which is a base of another. scales terrible but conceptually simple
-        tempDict = {} #look up table to be built
-        reverseTempDict = {} 
-        #word has [base, ]
-        okEnds = set(['s','ic','ics','ed'])
-        for word1 in wordRegion:
-            for word2 in wordRegion:
-                compareResults = checkSim(word1,word2)
-                # if wordLongDiff in okEnds then word2 points to word1. word1 must be longer
-                # like if word1 is cheese and word2 is cheeses
-                # the trick is dealing with cases like:
-                    # ferromagnetics ferromagnetic ferromagnet
-                    # if a value is the same as a key (easy to check) forward that val
-                if compareResults[1] in okEnds:
-                    if word1 in tempDict: # word 1 is already a key in the dict
-                        # word2 needs to point to the value of word1
-                        tempDict[word2] = tempDict[word1]
-                        reverseTempDict = {v: k for k, v in tempDict.items()}
-                        
-                    if word2 in tempDict:
-                        #word2 is already in tempDict.
-                        # this means that word2 was previously tried as word2, since
-                        # we only reach this stage once with a given word as word2
-                        print("do'h, see the findLemma subFunc")
-                        
-                    if word2 in reverseTempDict: #
-                        # if the word that points is being pointed to by something
-                        # else, need to update the val of that something else 
-                        # ferromagnetic is word 2, ferromagnet is word 1
-                        # need to go back and update ferromagnetics
-                        
-                        tempWordDict[word2] = word1
-                        thingToBeUpdated = reverseTempDict[word1]
-                        tempWordDict[thingToBeUpdated] = word1
-                        reverseTempDict = {v: k for k, v in tempDict.items()}
-                    
-                    tempDict[word2] = word1
-                
-            return tempDict
-                
-    ###### preparing inputs
-    lookUpDict= {}
-    dicBowKeys = [] 
-    for key in dicBow.keys(): 
-        dicBowKeys.append(key) 
-    dicBowKeys.sort() 
-    
-    point1 = 0 # initializing pointers 1 and 2
-    point2 = 1
-    currentWords = [] # this list will store the base and differences for regions of similar words
-    
-    while point2 < len(dicBowKeys):
-        moveCond = True
-        currentWords.append(checkSim(dicBowKeys[point1],dicBowKeys[point2]))
-        if len(currentWords[-1][0]) == 0: # see the if count < X: condition in checkSim. we are checking to see if the latest results form checkSim say that the words are totally different
-            moveCond = False    
-        #else:
-            #print('need to fill this in, do I need to do anything here?')
-        if moveCond == False and len(currentWords) < 2: # if point1 and 2 are at different words AND theres only 1 word in current words, then we have nothing to compare
-            point1 += 1 #words are different, keep steping through
-            point2 += 1
-            currentWords = [] #reset current words
-        elif moveCond == False and len(currentWords) > 2: ### this condition triggers the main part of the function, actually figuring out the base words (lemma)
-            wordRegion = dicBowKeys[point1:point2+1]
-            lookUpDict.update(findLemma(wordRegion))
-            point1 += len(currentWords)
-            point2 = point1 + 1
-            currentWords = []
-        else: ## if movecondition is true
-            point2 += 1
-        
-    return lookUpDict
-
-def removeBadScrap(dfIn):
-    
-    def customRemBad(x):
-        if x in badSet:
-            return False
-        else:
-            return True
-        
-    import pickle
-    badSet = pickle.load(open("badSetMade_2-25.pckl", "rb" ))
-    dfIn = df[dfIn['ids'].apply(lambda x: customRemBad(x)) == True]
-                     
-    return dfIn
 
 def custom_clean_tokens(tok_list: list) -> list:
     """ removes tokens which have lots of number or nonsense characters (those in symbol2Rem)
@@ -1224,20 +1067,11 @@ def clean_year(x, years):
         return 'not number'
 
 def process_cols(df, test_date, svd = False):
+    # this functionality has been moved to the transformers
     # converts each col to one hot encoded, calls functions to get
     # all the cats, clean cats, and finally uses the set of cats for each
     # col to get sparse mats. 
     def process_title(df):
-        # path = os.getcwd()
-        # path_file = path + "\\other data to be loaded\\" + 'stop_words.txt'
-        # stop_words = set()
-        # with open(path_file, 'rb') as f:
-        #     for line in f:
-        #         stop_words.add(str(line))
-        # stop_words = set(['the', 'a', 'to', 'with', 'for', 'then', 'there', 'what'])
-        # set_to_remove = set(['!','%','&','[',']','^'])
-
-        #df['titleID_list'] = general_multi_proc(str_col_to_list_par, df['titleID'], " ")
         
         df['titleID_list'] = str_col_to_list_par(" ", df['titleID'])
         
@@ -1409,16 +1243,11 @@ def add_author_ids(df):
     #s_authors = pd.Series(data = vals, index = index)
     #df = df.join(s_authors)
     
-def is_float(x):
-    
-
-    if isinstance(x, float):
-        return True
-    else:
-        return False
     
 def run_script():
-    """runs everything in if __name__ == "__main__"
+    """
+    currently outdated.
+    runs everything in if __name__ == "__main__"
         want to be able to call this whole process from the build model predict script
 
 
