@@ -374,6 +374,36 @@ def clean_df(df, cols_to_return):
 
     return df
 
+
+def run_script_for_loading_from_email_bot():
+
+    #files_read = set()
+    # this tells which position in the list corresponds to
+    colNames = {"titleID": 0, "title_main": 1, "cited": 2, "Authors": 3, "pubDate": 4, \
+                "Journal": 5, "Conference": 6, "Source": 7, "book":8, "vol": 9, "issue": 10, "pages": 11, "publisher": 12, \
+                "description": 13, "citedYear": 14, "scrap_auth_id": 15, "urlID": 16, \
+                "all": 17}
+    
+    dirs_to_read = ['C:\\Users\\bcyk5\\OneDrive\\Documents\\GitHub\\citation_prediction_from_google_scholar\\user interface\\data to model\\']
+    
+    ##### temp to readuce amount of data
+    #dirs_to_read = dirs_to_read[len(dirs_to_read) - 3:-1]
+    
+    keysToGet = set(['titleID', 'cited', 'authors', 'authors', 'pubDate', 'journal'])
+    #papersDict, files_read = load_dicts_from_dir("paperDictA", dirs_to_read, keysToGet)
+    
+    papers, files_read = load_dicts_from_dir_to_list("", dirs_to_read, colNames, set('a'))
+    df = paperlist_to_df(papers)
+    
+    # only keeping these cols
+    cols_to_return = ['titleID',"title_main", 'Authors', 'Journal', "Conference", "Source", "book", \
+                      'publisher', "vol", "issue", 'year', "pages", 'cited_num', \
+                  'cites_per_year', 'date', 'scrap_auth_id', "citedYear", "urlID"]
+    
+    return clean_df(df, cols_to_return)
+    
+
+
 if __name__ == "__main__":
     ### loading all the papers we've gotten so far from crawling the papers by citation
     

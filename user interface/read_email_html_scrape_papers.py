@@ -11,8 +11,39 @@ from selenium.webdriver import ActionChains
 from bs4 import BeautifulSoup
 import codecs
 import time
+import pickle
+import os
 
 driver = webdriver.Chrome('./chromedriver')
+def get_paper_titles2():
+    """ Gets the paper titles from an html doc. Right now
+        the html is loaded from a file.
+    
+    
+    Returns
+    -------
+    papers : List
+        Paper titles.
+
+    """
+    def get_papers_as_tags(page, papers):
+        soup = BeautifulSoup(page, 'html.parser')
+        for div in soup.find_all("a"):
+            if "http://scholar.google.com/scholar_url?url" in str(div):
+                papers.append(div)
+        return papers
+                
+    path = os.getcwd() + "//test_gmail_app//updates_html//"
+    papers = []
+    for file in os.listdir(path):
+        page = pickle.load(open(path + file, 'rb'))
+        papers = get_papers_as_tags(page, papers)
+
+    
+    # for paper in papers:
+    #     print(paper.text)
+    
+    return papers
 
 def get_paper_titles():
     """ Gets the paper titles from an html doc. Right now
@@ -25,7 +56,10 @@ def get_paper_titles():
         Paper titles.
 
     """
+
     
+    
+    #path = os.getcwd() + "//test_gmail_app//updates_html//"
     
     f = codecs.open("test_email_gs_update.html", 'r', "utf-8")
     page = f.read()
@@ -62,12 +96,10 @@ def find_paper_get_info(paper):
         # finds and clicks the paper of interest
         paper_2_click = driver.find_elements_by_xpath(\
             "//*[text()='Impact of carbon-based charge transporting layer on the performance of perovskite solar cells']")
-        try:
-            paper_2_click = driver.find_element_by_xpath("//*[.='" + paper.text + "']")
-            paper_2_click.click()
-            return True
-        except:
-            return False
+        
+        paper_2_click = driver.find_element_by_xpath("//*[.='" + paper.text + "']")
+        paper_2_click.click()
+        return None
         
     def show_more():
         #author_info = getAuthorInfo(crawler)
@@ -118,8 +150,7 @@ def find_paper_get_info(paper):
         if author_emails:
             gs_id_links = author_emails[0].find_elements_by_css_selector('a')
         else:
-            return None, None
-        
+            return 
         author_ids = set()
         author_link = None
         for author_link in gs_id_links:
@@ -177,6 +208,11 @@ def find_paper_get_info(paper):
         soup = BeautifulSoup(html)
         # names = ["Pages"]
         # text_out, where_pub = get_where_pub(soup, names)
+        try:
+            tempDict['href url'] = driver.current_url
+        except:
+            tempDict['href url'] = 'couldnt get link'
+            
         try:
             tempDict['Authors'] = get_data_field(soup, ['Authors'])[0]
         except:
@@ -269,25 +305,19 @@ def find_paper_get_info(paper):
     
     search_for_paper()
     # driver now on the gs search result page for that paper
-    time.sleep(3)
+    
     author_ids, author_link = get_authors_click_author()
     if author_link:
         author_link.click()
     else:
         return None
     # driver now on the authors gs page
-    time.sleep(5)
 
     show_more()
     # making sure all papers visible
-    time.sleep(3)
     
-    if find_paper_on_author_page() == False:
-        return None
-    else:
-        pass
+    find_paper_on_author_page()
     # now on the page for that paper
-    time.sleep(5)
     
     tempDict = get_data(paper)
     
@@ -295,17 +325,34 @@ def find_paper_get_info(paper):
     
     return tempDict
     # 'Impact of carbon-based charge transporting layer on the performance of perovskite solar cells'
+        
+#authors = ?
 
 def loop_papers_get_data():
     paperDict = {}
-    papers = get_paper_titles()
-    
+    papers = get_paper_titles2()
+    paperDict = pickle.load(open('temp_paperDictA.pickle', 'rb'))
     for paper in papers:
-        time.sleep(5)
-        tempDict = find_paper_get_info(paper)
-        if tempDict:
-            paperDict[paper.text] = tempDict
-    
+        if paper.text not in paperDict:
+            try:
+                tempDict = find_paper_get_info(paper)
+                #if tempDict:
+                paperDict[paper.text] = tempDict
+            except:
+                paperDict[paper.text] = None
+            
+                #return paperDict
+        
     return paperDict
 
-paperDict = loop_papers_get_data()
+
+if __name__ == "__main__":
+
+    paperDict = loop_papers_get_data()
+    
+    path = os.getcwd() + '//paperDict files//'
+    
+    pickle.dump(paperDict, open("paperDictA_.pckl", 'wb'))
+    
+    
+    

@@ -184,9 +184,9 @@ def package_for_display(df):
     """ Select which papers are shown to the user, put info into a dictionary
     """
     def determine_rank_1(x, row):
-        if x > 1000:
+        if x > 100:
             return 1
-        elif x > 500:
+        elif x > 25:
             return 2
         elif x > 15:
             return 3
@@ -211,9 +211,11 @@ def package_for_display(df):
         for i, row in df_out.iterrows():
             #print(row['titleID'])
             output.append({'title': row['titleID'], 'other_info': [row['Journal'], \
-                                    row['Authors']], 'rank': determine_rank_2(row['cites_per_year'], i)})
+                                    row['Authors']], 'rank': determine_rank_1(row['cites_per_year'], i)})
             
         return output
+    
+    df = df.iloc[0:300]
     
     df_out = grab_top_10(df)
     df_out = df_out.reset_index()
@@ -225,13 +227,13 @@ if __name__ == "__main__":
     
     fraction_correct_and_order(res_dict_to_read, 0.05)
     
-    df_file_name = 'latest_df_to_ML.csv'
+    df_file_name = 'latest_df_to_ML_test.csv'
     
     df2 = setUp(df_file_name, res_dict_to_read)
     
     output = package_for_display(df2)
     
-    path  = 'C:\\Users\\bcyk5\\OneDrive\\Documents\\GitHub\\citation_prediction_from_google_scholar\\user interface\\data\\'
+    path  = 'C:\\Users\\bcyk5\\OneDrive\\Documents\\GitHub\\citation_prediction_from_google_scholar\\user interface\\data to ui\\'
     
     pickle.dump(output, open(path + 'output_to_ui.pickle', 'wb'))
     #df2['relativeRes'] = df2.apply(getRelativeRes, axis =1)
