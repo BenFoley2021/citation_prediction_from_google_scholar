@@ -48,7 +48,7 @@ def result():
                      {'title': 'test_thing3', 'other_info': ['steak'], 'rank': 'circle2'},
                      {'title': 'test_thing4', 'other_info': ['wings'], 'rank': 'circle3'}]
                          
-    return render_template('result.html', recipe_list = data)
+    return render_template('result2.html', recipe_list = data)
 
 
 def get_data():
