@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
 """
 Created on Sun Mar  7 17:36:34 2021
-V_2_8_1  the execption in the main loop triggers a ~5 min wait before trying to reinitialze the crawler object and start again
 
-V_2_8_2 need to make a thing so that if the interenet dies in the middle of scrapping an author it doesn't make the author as scrapped
+author_list_2
 
+need to add the title of every paper from an author to that authors data, want to track authors by key in addition to name
 
-added another loop in if __main__ which restarts the mainPaperCrawlLoop if something goes wrong. the webdriver is now an attribute 
-of pathHeadA, so it gets reinitialied when this happens. number of times that the mainpapercrawl is restarted limited. added error log attribute
-of pathHeadA, when pathHeadA is returned the last time this should be visible
+5-3 adding a thing to check if we got a 404, need to mark that author as bad in the db
+
+the 404 page has the text "\n\nError 404"
 
 @author: Ben
 """
@@ -85,6 +85,8 @@ class pathHeadA():
         self.visited = sqlite3.connect(dbB_path)
         self.authorTable = sqlite3.connect(dbA_path)
         
+        self.hit_capatcha = False
+        
     def are_getting_useful(self, tempDict):
         """ there is often lots of junk at the bottom of authors gs pages, can't afford to waste time on it
             
@@ -112,12 +114,12 @@ class pathHeadA():
             thresh3 = ['non_en', 'no_pubDate', "no_title", "not_real_paper"]
             thresh5 = ['confrence_no_cites', "old_no_cites", "missing_fields", "book"]
             for key in thresh3:
-                if self.done_with_author['params'][key] > 4:
+                if self.done_with_author['params'][key] > 9:
                     self.done_with_author['to_stop'] = True
                     return None
         
             for key in thresh5:
-                if self.done_with_author['params'][key] > 5:
+                if self.done_with_author['params'][key] > 9:
                     self.done_with_author['to_stop'] = True
                     return None
         
@@ -125,7 +127,7 @@ class pathHeadA():
             for key in self.done_with_author['params'].keys():
                 count += self.done_with_author['params'][key]
             
-            if count > 12:
+            if count > 21:
                 self.done_with_author['to_stop'] = True
                 return None
         
@@ -209,7 +211,7 @@ class pathHeadA():
                 
         def is_missing_fields():
             missing_count = 0
-            missing_thresh = 0.4 
+            missing_thresh = 0.4
             for key in tempDict:
                 if tempDict[key] == 'NA' or tempDict[key] == "couldnt find":
                     missing_count += 1
@@ -239,7 +241,7 @@ class pathHeadA():
         unwanted_sources = ["tbd", "under review", "in review", "not published", "poster", "bulletin", "workshop"]
 
 
-        is_conference() ### is it a confrences with no cites
+        #is_conference() ### is it a confrences with no cites, getting confrences now
         is_book() # is it a book with no cites
         is_old_no_cites() # is the paper old with no cites
         is_en() # is the title in english
@@ -260,8 +262,8 @@ class pathHeadA():
 
         """
         
-        sql = "SELECT id FROM " + 'firstauthors' + " WHERE scrapped=?" + " LIMIT " + limit 
-        key = [("false")]
+        sql = "SELECT id FROM " + 'perovskiteAuthors' + " WHERE scrapped=?" + " LIMIT " + limit 
+        key = [("False")]
         authorStack = []
         with self.authorTable as con:
             data = con.execute(sql, key)
@@ -301,7 +303,7 @@ class pathHeadA():
         None.
 
         """
-        sql = "UPDATE firstauthors" + " SET" + " scrapped=" + '1' + " WHERE id=?"
+        sql = "UPDATE perovskiteAuthors" + " SET" + " scrapped=" + '1' + " WHERE id=?"
         
         for author in self.authorsDone:
             key = [(author)]
@@ -323,7 +325,7 @@ class pathHeadA():
         None.
 
         """
-        sql = "UPDATE firstauthors" + " SET" + " scrapped=" + '1' + " WHERE id=?"
+        sql = "UPDATE perovskiteAuthors" + " SET" + " scrapped=" + '1' + " WHERE id=?"
         
         try:
             with self.authorTable as con:
@@ -346,9 +348,9 @@ class pathHeadA():
         """
         data = []
         for key in self.papersThisAuthor: # i suppose this loop structure could also be shared with 'papers' for more polymorphic-ness
-            data.append((key, self.scrappedByID))
+            data.append((key, self.scrappedByID, self.curAuthorID))
         
-        sql = 'INSERT INTO authorpapers (id, value) values (?, ?)'
+        sql = 'INSERT INTO papers_from_authors_5_3 (id, value, author) values (?, ?, ?)'
     
         counter = 0
         for dataRow in data:
@@ -375,7 +377,7 @@ class pathHeadA():
 
         """
         
-        sql = "SELECT EXISTS(SELECT 1 FROM " + "authorpapers" + " WHERE id=?)"
+        sql = "SELECT EXISTS(SELECT 1 FROM " + "papers_from_authors_5_3" + " WHERE id=?)"
 
         #sql2 = 'SELECT EXISTS(SELECT 1 FROM TEST WHERE id=?)'
         key = [(id_to_check)]
@@ -386,8 +388,6 @@ class pathHeadA():
                     return True
                 else:
                     return False
-        
-    
 
     def getInfoFromPapers(self,papers):
         """ gets all necssary info and puts in a dict. like parse papers from paperGraphScrapper
@@ -461,7 +461,7 @@ class pathHeadA():
             self.papers_got = 0
             self.papers_attempted = 0
             self.author_error = False
-            
+            self.papersThisAuthor = []
         def get_data():
             # actually gets data
                             # for the rest of the things, we want to limit our search the parent node which contains 
@@ -560,7 +560,7 @@ class pathHeadA():
             # update the things regardless of how much data we actually got
             tempDict['scrap_auth_id'] = self.curAuthorID
             self.paperDict.update({tempDict['titleID']: tempDict})
-            self.papersThisAuthor.append(tempDict['titleID'])
+            
 
             ### will probably need to nest this in a try statement and have another error type for if it fails
             self.are_getting_useful(tempDict) ### checking usefullness of this paper
@@ -576,7 +576,8 @@ class pathHeadA():
                 self.author_error = True
                 print('author error')
             return None
-            
+        
+        ####### start of script within this function
         reset_author_attrs()     
 
         for i, paper in enumerate(papers):
@@ -589,7 +590,7 @@ class pathHeadA():
                 return None
             
             titleID = paper.text 
-            
+            self.papersThisAuthor.append(titleID)
             if self.check_db_papers(titleID) == False: # this operates on the paper element, which we already have
                 paper.click()
                 #print('clicked')
@@ -624,10 +625,7 @@ class pathHeadA():
                 ######## clicking the x button so the next paper will be visible, need to do this no matter what
                 xButton = self.driver.find_element_by_id("gs_md_cita-d-x")
                 xButton.click()
-                time.sleep(0.5)
-            
-            else:
-                pass
+                time.sleep(1)
         return None
 
 def getParentText(driver, textIn): # this function no longer used
@@ -665,7 +663,7 @@ def getAllPapers(crawler):
     while showMore == True:
         try:
             showMoreButton = crawler.driver.find_elements_by_xpath("//*[contains(text(), 'Show more')]") # getting the show more button
-            
+            time.sleep(1)
             parent = showMoreButton[0].find_element_by_xpath('..')
             parent2 = parent.find_element_by_xpath('..')
             
@@ -709,15 +707,15 @@ def is_author_sketchy(papers,author_info):
                 "Pune", "Ahmadabad", "Ahmadābād", "Sūrat", "Surat", \
                     "Lucknow", "Jaipur"]
 
-    chinese_cities = ["China" , "Chinese", "Shanghai", "Beijing", "Chongqing", "Tianjin", "Guangzhou", \
-                  "Shenzhen", "Chengdu", "Nanjing", "Wuhan"]
+    # chinese_cities = ["China" , "Chinese", "Shanghai", "Beijing", "Chongqing", "Tianjin", "Guangzhou", \
+    #               "Shenzhen", "Chengdu", "Nanjing", "Wuhan"]
     other_places = ["indonesia", "china", "india", "malaysia", "africa", "Guatemala", "Nigeria", "brazil", \
                     "chile", "Brasília", "Brasilia", "mexico"]
         
-    domains = ["edu.cn", "edu.in", "gov.in", "gov.cn", "my.edu", "ac.in", "ac.id", "ac.my", "gov.br", \
+    domains = [ "edu.in", "gov.in", "my.edu", "ac.in", "ac.id", "ac.my", "my.edu", "gov.br", \
                "ac.br", "edu.br", "edu.au", "gov.au", "ac.du"]
-        
-    non_usa_list = indian_cities + chinese_cities + domains + other_places
+        #"gov.cn""edu.cn",
+    non_usa_list = indian_cities + domains + other_places
     
     author_keys_to_check = ['verEmail', 'rank']
     author_info['usa'] = True
@@ -732,7 +730,6 @@ def is_author_sketchy(papers,author_info):
     
     return author_info
     
-
 def getAuthorInfo(crawler):
     
     tempDict = {}
@@ -770,7 +767,7 @@ def getAuthorInfo(crawler):
                 
     except:
         print('something went wrong getting author info')
-    
+
     return tempDict
 
 def saveCurrent(dict2Save, fileName):
@@ -794,6 +791,14 @@ def saveCurrent(dict2Save, fileName):
     
     savePickle(fileName, dict2Save, outDir)
 
+def capatcha(crawler):
+    cap = crawler.driver.find_elements_by_css_selector("iframe[src^='https://www.google.com/recaptcha/api2/anchor?']") 
+    if cap:
+        crawler.hit_capatcha = True
+        print(crawler.curAuthorID)
+        input("Press Enter to continue...")
+        crawler.hit_capatcha = False
+    return None
 
 def mainPaperScrapeLoop(dbA_path: str, dbB_path: str, main_loop_error: int, error_log: list) -> pathHeadA:
     """ need to 
@@ -816,6 +821,26 @@ def mainPaperScrapeLoop(dbA_path: str, dbB_path: str, main_loop_error: int, erro
     None.
 
     """
+    def update_db_404():
+        # need to set the author to 404
+        sql = "UPDATE perovskiteAuthors" + " SET" + " scrapped=" + '404' + " WHERE id=?"
+        key = [(crawler.curAuthorID)]
+    
+        try:
+            with crawler.visited as con:
+                data = con.execute(sql, key)
+        except:
+            print('error setting author to 404')    
+                
+    def is_404():
+        html = crawler.driver.page_source
+        soup = BeautifulSoup(html)
+        test_str = "\n\nError 404"
+        if test_str in soup.text:
+            return True
+        else:
+            return False
+        
     limit = str(1000) # how many authors to grab from the db (one author will be randomly selected from this list for crawl)
     paper_save_param = 1000 ### after this many papers, dump the paper data to disk
     crawler = pathHeadA(dbA_path, dbB_path, main_loop_error, error_log) # intialize object
@@ -828,18 +853,32 @@ def mainPaperScrapeLoop(dbA_path: str, dbB_path: str, main_loop_error: int, erro
             crawler.authorStack = [random.choice(crawler.authorStack)] # picking only one to stay in the stack
             # side note: the stack isn't needed anymore, since the program has been changed to do
             # one author at a time. just haven't redone the object attrs yet
-            
+            crawler.driver.delete_all_cookies()
             pathHeadA.nextAuthor(crawler)
             pathHeadA.makeUrl(crawler)
-            crawler.driver.get(crawler.url)
+            crawler.driver.get(crawler.url) # getting the url
+            if is_404() == True:
+                time.sleep(2)
+                crawler.driver.get(crawler.url)
+                if is_404() == True:
+                    time.sleep(3)
+                    crawler.driver.get(crawler.url)
+                    if is_404() == True:
+                        update_db_404()
+                        crawler.author_error = '404'
+                        continue
             
+            #capatcha(crawler) # checking to see if there is a capatcha
+            print(crawler.curAuthorID)
             papers, author_info = getAllPapers(crawler)
-            
+
             if author_info['sketchy'] == False and author_info['usa'] == True: # if the author looks suspicious then we skip
                 print('skipped author')
                 if len(papers) > 0:
-                    pathHeadA.getInfoFromPapers(crawler,papers)
+                    pathHeadA.getInfoFromPapers(crawler, papers)
                     crawler.author_info.update({crawler.curAuthorID: author_info})
+                    crawler.author_info[crawler.curAuthorID]['all_papers'] = \
+                       crawler.papersThisAuthor
                     print("len papers_this_author = " + str(len(crawler.papersThisAuthor)))
                     
                     
@@ -876,8 +915,8 @@ def mainPaperScrapeLoop(dbA_path: str, dbB_path: str, main_loop_error: int, erro
 
 if __name__ == "__main__":
     
-    dbA_path = 'C:\\Users\\bcyk5\\OneDrive\\Documents\\ds projects big data\\get citations google scholar\\parallel scrape paper graph and author\\test1\\dataBase\\main_db_A.db'
-    dbB_path = 'C:\\Users\\bcyk5\\OneDrive\\Documents\\ds projects big data\\get citations google scholar\\parallel scrape paper graph and author\\test1\\dataBase\\db_B.db'
+    dbA_path = 'C:\\Users\\bcyk5\\OneDrive\\Documents\\ds projects big data\\get citations google scholar\\parallel scrape paper graph and author\\test1\\dataBase\\db_C.db'
+    dbB_path = 'C:\\Users\\bcyk5\\OneDrive\\Documents\\ds projects big data\\get citations google scholar\\parallel scrape paper graph and author\\test1\\dataBase\\db_C.db'
     
     # the purpose of this loop is to restart the crawl if there's error that wasn't handled. Call 
     # mainPaperScrapeLoop again and get a new crawler object(with new webdriver and db connections)
@@ -892,20 +931,7 @@ if __name__ == "__main__":
         saveCurrent(crawler.paperDict, 'paperDictA')
         main_loop_error = crawler.main_loop_error
         error_log = crawler.error_log
-        if main_loop_error > 9:
+        if main_loop_error > 200:
             scrape = False
 
-if __name__ != "__main__":
-    driver.get("https://scholar.google.com/citations?user=lMPmOH4AAAAJ&hl=en")
-    
-    papers = getAllPapers()
-    
-    paperEles = papers[0]
-    
-    ele = paperEles[0]
-    
-    href = ele.get_attribute('data-href')
-    
-    body = driver.find_elements_by_id("gsc_ocd_bdy")
-#sql2 = 'SELECT EXISTS(SELECT 1 FROM TEST WHERE id=?)'
-    ### test block 3-22
+

@@ -2,16 +2,16 @@
 """
 Created on Sat Jan 30 16:53:58 2021
 
-6-1, moving svd to its own step in the pipe
-    also want to make the predictor warpper more flexible, 
-    should try move models besides xgb'
-    
-    near end of day: using imbalanced pipeline (link below), no longer need estimator wrappers
-    to do next: how to do cvGridSearch on only a section of the pipeline?
-    
+5/10, fixed error, .fit needs to return self
+https://github.com/dmlc/xgboost/issues/1818
 
-possible solutions to oversampling with sklearn pipe issue
-https://imbalanced-learn.org/stable/auto_examples/pipeline/plot_pipeline_classification.html
+
+rewritting this as a transformer
+
+input is the dataframe
+
+the multiprocessing is causing problems, haven't narrowed it down beyond that
+
 
 @author: Ben Foley
 """
@@ -43,12 +43,12 @@ class MainTransformer(base.BaseEstimator, base.TransformerMixin):
         # self.process_publisher = transformers['publisher_transformer']
         # self.process_pages = transformers['pages_transformer']
         # self.process_year = transformers['year_transformer']
-        self.transformers_present = set(transformers.keys())
-        self.transformers = transformers
-        # for key, val in transformers.items():
-        #     if val:
-        #         self.transformers_present.add(key)
-        #         self.transformers[key] = val
+        self.transformers_present = set()
+        self.transformers = {}
+        for key, val in transformers.items():
+            if val:
+                self.transformers_present.add(key)
+                self.transformers[key] = val
     
         #self.transformer = transformers['title_transformer']
         
@@ -56,9 +56,9 @@ class MainTransformer(base.BaseEstimator, base.TransformerMixin):
 
         # for transformer in self.transformers:
         #     self.transformers[transformer].fit(df)
-        for transformer_key in self.transformers.keys():
-            print('started fiting ' + transformer_key)
-            self.transformers[transformer_key].fit(df)
+        for transformer in self.transformers_present:
+            print('started fiting ' + transformer)
+            self.transformers[transformer].fit(df)
             
         return self
         
@@ -251,52 +251,6 @@ class PageTransformer(base.BaseEstimator, base.TransformerMixin):
         
         return df[cats].astype((pd.SparseDtype("int", 0)))
     
-class ToClasses(base.BaseEstimator, base.TransformerMixin):
-    def __init__(self, thresh):
-        self.threshold = thresh
-        
-    def fit(self, X, y = None):
-        return self
-    def transform(self, X, y = None):
-        y_class = np.zeros(y.shape)
-        for i, thing in enumerate(y):
-            if thing > self.threshhold:
-                y_class[i] = 1
-            else:
-                y[i] = 0
-        
-        return X, y_class
-    
-class OverSamplerWrapper(base.BaseEstimator, base.TransformerMixin):
-    # this doesn't work, transform doesn't get handed y
-    def __init__(self, sampling_strat):
-        self.sampling_strat = sampling_strat
-        self.transformer = None
-        
-    def fit(self, X, y = None):
-        self.transformer = RandomOverSampler(sampling_strategy = self.sampling_strat)
-        return self
-    
-    def transform(self, X, y):
-        return oversample.fit_resample(X_train, y_train)
-    
-    
-class ClassifierWrapper(base.BaseEstimator, base.TransformerMixin):
-    def __init__(self, model, oversampler):
-        self.model = model
-        self.oversampler = oversampler
-        
-    def fit(self, X, y):
-        X, y = self.oversampler.fit_resample(X, y)
-        self.model.fit(X, y)
-        
-        return self
-    
-    def predict(self, X):
-        return self.model.predict(X)
-        
-        
-    
 class runXGB(base.BaseEstimator, base.TransformerMixin):
     def __init__(self, idx):
         self.model = XGBClassifier()
@@ -314,7 +268,7 @@ class runXGB(base.BaseEstimator, base.TransformerMixin):
         y_test = set_classes(y_test, 10, 10)
         #X_train, X_test, y_weight, y_weight_test, keys_train, keys_test = manTTS(keys, X, y_weight, idx)
         # train and fit the svd transformer
-        self.svd = TruncatedSVD(2)
+        self.svd = TruncatedSVD(4000)
         
         #w = y_weight# switched to oversampling
         X_train = self.svd.fit_transform(X_train)
@@ -369,7 +323,7 @@ class runXGBRegress(base.BaseEstimator, base.TransformerMixin):
         X_train, X_test, y_train, y_test, keys_train, keys_test = manTTS(self.keys, X, y, self.idx)
         #X_train, X_test, y_weight, y_weight_test, keys_train, keys_test = manTTS(keys, X, y_weight, idx)
         # train and fit the svd transformer
-        self.svd = TruncatedSVD(2)
+        self.svd = TruncatedSVD(5000)
         
         #w = y_weight# switched to oversampling
         X_train = self.svd.fit_transform(X_train)
@@ -499,6 +453,7 @@ def set_classes(y: np.array, thresh1: float, thresh2: float):
 
 
 
+
 def prep_df(df: pd.DataFrame, which = None):
     
     if which == 'from_email':
@@ -530,6 +485,102 @@ def prep_df(df: pd.DataFrame, which = None):
 
     return df, y
 
+def getTok2(dfIn, col, col_2_write):
+    """ Using spacy to get the tokens from the title, currently this function isn't used
+    """
+    tokens = []
+    #start = time.time()
+    #disable = ["tagger", "parser","ner","textcat"]
+    for doc in nlp.pipe(df[col].astype('unicode').values):#,disable = disable):
+        #doc.text = doc.text.lower()
+        #tokens.append([token.text.lower() for token in doc if not token.is_stop])
+        tempList = ([token.lemma_ for token in doc])
+        for i,string in enumerate(tempList):
+            try:
+                tempList[i] = string.lower()
+            except:
+                print(string)
+    
+        tokens.append(tempList)
+    dfIn[col_2_write] = tokens
+    return dfIn
+
+def removeFromDict(removeSet,dicIn): #### removes things add hoc from the dictionary
+    #my_dict.pop('key', None) https://stackoverflow.com/questions/11277432/how-can-i-remove-a-key-from-a-python-dictionary
+    for thing in removeSet:
+        dicIn.pop(thing,None)
+
+    return dicIn
+
+def customProcTok(bowDic: dict,symbol2Rem: set) -> dict:
+    """ removes tokens which have lots of number or nonsense characters (those in symbol2Rem)
+    
+        custom text parsing to remove some of the trash that made it through spacy tokenization
+        loop through the dicBow
+        if key has len 1 remove it
+        if it has any of the characters in symbol2rem
+        if it can be converted into a float
+        more than 2 characters of the string can be converted into a float
+
+    Parameters
+    ----------
+    bowDic : Dict
+        The dict which keeps track of the words (or tokens) which are going into the 
+        one hot encoded matrix
+    symbol2Rem : Set
+        Set of symbols, if a token contains these symbols, we remove it.
+
+    Returns
+    -------
+    tempDic : Dict
+        The updated dicBow after removeing tokens.
+
+    """
+
+    years = np.linspace(1990,2021,32).astype(int).tolist()
+    years = [str(i) for i in years]
+    years = set(years)
+    
+    okSet = set(['1d','2d','3d','4d'])
+    okSet.update(years)
+    
+    tempDic = {}
+    for key in bowDic:
+        count = 0
+        write = True  
+        if key in okSet:
+            pass
+        else: 
+            try:
+                for n in key:
+                    try:
+                        float(n)
+                        count = count +1
+                    except:
+                        pass
+        
+                    if n in symbol2Rem or count > 1:
+                        write = False
+                        break
+                try:
+                    float(key)
+                    write = False
+                    continue
+                except:
+                    pass
+                if len(key) < 1:
+                    write = False
+                    continue    
+                if len(key) < 3 and key not in okSet:
+                    write = False
+                    continue  
+            except:
+                write = False
+
+        if write == True:
+            tempDic[key] = bowDic[key]
+
+    return tempDic 
     
 def remTok(bowDic,set2Rem): ### i guess theres another ad hoc function to remove things from a dict
     """ Removes keys in the set2Rem variables from the dictionary. 
@@ -928,6 +979,67 @@ def str_col_to_list_par(splitter, df_col): # meant to be used with apply or lamb
     
     return df_col.apply(lambda x: custom(x, splitter))
 #### 
+def general_multi_proc(func, interable, *args):
+    """ func is the function we want to run, interable is the thing (usually
+        a df or array) that we want to split up and run the function on in
+        parrallel, *args are additional arguments that need to be passed to 
+        func.
+    
+    Parameters
+    ----------
+    func : Function
+        The function to be run, takes iterable and *args as arguments.
+    interable : Anything which can be split up with np.array_split
+        The thing to be split up and run in parallel.
+    *args : arguments needed by func
+        DESCRIPTION.
+    Returns
+    -------
+    None.
+
+    """
+    
+    def recombine(output: list):
+        """ process the output to desired format
+            e.g. list of series -> 1 series
+            list of dfs -> 1 df
+            list of sets combined into 1 set
+
+        Parameters
+        ----------
+        output : List
+            list of the outputs from parrallel compution to be recombined.
+
+        Returns
+        -------
+        recombined_output: iteritable, variable data types
+            The output list recombined (eg pd.concat) to a single variable.
+            The data types currently supported are in the if strucutre. If none 
+            of these, the output is the input list. 
+
+        """
+        if type(output[0]) == pd.DataFrame or type(output[0]) == pd.Series:
+            recombined_output = pd.concat(output)
+            
+        elif type(output[0]) == set:
+            recombined_output = set.union(*output)
+            
+        else: recombined_output = output
+        
+        return recombined_output
+    
+    
+    #print(*args)
+    fp = partial(func, *args)
+    data_split = np.array_split(interable, multiprocessing.cpu_count())
+    process_pool = multiprocessing.Pool(multiprocessing.cpu_count())
+    output = process_pool.map(fp, data_split) 
+    
+    process_pool.close()
+    process_pool.join()
+    
+    return recombine(output)
+
 
 
 def get_dummies_for_par(cats_to_use, df):
@@ -954,6 +1066,153 @@ def clean_year(x, years):
     else:
         return 'not number'
 
+def process_cols(df, test_date, svd = False):
+    # this functionality has been moved to the transformers
+    # converts each col to one hot encoded, calls functions to get
+    # all the cats, clean cats, and finally uses the set of cats for each
+    # col to get sparse mats. 
+    def process_title(df):
+        
+        df['titleID_list'] = str_col_to_list_par(" ", df['titleID'])
+        
+        #df['titleID_list'] = parallelize_on_rows(df['titleID_list'], make_lower)
+        
+        df['titleID_list'] = df['titleID_list'].apply(lambda x: make_lower(x))
+        
+        df['titleID_list'] = df['titleID_list'].apply(lambda x:  custom_clean_tokens(x))
+        
+        #title_words = general_multi_proc(get_all_cat, df['titleID_list'])
+        
+        title_words = get_all_cat(df['titleID_list'])
+        
+        synonyms = buildCustomLookup(title_words) # this is pretty slow
+        title_words = remove_synonym(title_words, synonyms)
+        
+        df['titleID_list2'] = general_multi_proc(merge_synonym_par, df['titleID_list'], \
+                                             synonyms)
+            
+        df['titleID_list2'] = merge_synonym_par(synonyms, df['titleID_list'])
+            
+        title_words_df = one_hot_encode_multi(title_words, df['titleID_list2'])
+        
+        title_words_df = threshold_sparse_df(title_words_df, 20)
+        return title_words_df
+    
+    def process_authors(df):
+    
+        df['Authors_list'] = general_multi_proc(str_col_to_list_par, df['Authors'], ",")
+        df['Authors_list'] = parallelize_on_rows(df['Authors_list'], make_lower)
+        authors = general_multi_proc(get_all_cat, df['Authors_list'])
+        author_df = one_hot_encode_multi(authors, df['Authors_list'])
+        author_df = threshold_sparse_df(author_df, 2)
+    
+        return author_df
+    
+    def process_author_ids(df):
+    
+        df['Author_id_list'] = general_multi_proc(str_col_to_list_par, df['author_ids'], " ")
+        df['Author_id_list'] = parallelize_on_rows(df['Author_id_list'], make_lower)
+        authors = general_multi_proc(get_all_cat, df['Author_id_list'])
+        author_id_df = one_hot_encode_multi(authors, df['Author_id_list'])
+        author_id_df = threshold_sparse_df(author_id_df, 5)
+    
+        return author_id_df
+    
+    def process_journals(df):
+        temp = set(['a'])
+        #journal_df = one_hot_encode(df['Journal'], temp) doesn't work
+        df['Journal'] = df['Journal'].apply(lambda x: clean_journal(x))
+        journal_df = pd.get_dummies(df['Journal'], sparse = True)
+        print('got dummies journal')
+        journal_df = threshold_sparse_df(journal_df, 7)
+        return journal_df
+
+    def process_year(df):
+        years = np.linspace(1990,2021,32).astype(int).tolist()
+        years = [str(i) for i in years]
+        years = set(years)
+        df['year'] = df['year'].astype(str)
+        return pd.get_dummies(df['year'].apply(lambda x: clean_year(x, years)), \
+                              sparse = True)
+        
+    def process_publisher(df):
+        publisher_df = pd.get_dummies(df['publisher'], sparse = True)
+        #print('got dummies journal')
+        publisher_df = threshold_sparse_df(publisher_df, 5)
+        return publisher_df
+    
+    def process_pages(df):
+        # if the page numbers are anything other than "can't read from scrapper"
+        # return 1, else 0
+        def custom1(x):
+            if x == 'cant read from scrapper out' or x == "couldnt find":
+                return 1
+            else: 
+                return 0
+            
+        cats = ['pages', 'vol', 'issue']
+        for cat in cats:
+            df[cat] = df[cat].apply(lambda x: custom1(x))
+        
+        return df[cats].astype((pd.SparseDtype("int", 0)))
+        
+    
+    
+    def do_svd(sparse_df, n_comp):
+        from sklearn.decomposition import TruncatedSVD
+        svd = TruncatedSVD(n_comp)
+        
+        sparse_mat = sparse_df.sparse.to_coo()
+        X_svd = svd.fit_transform(sparse_mat)
+        
+        return X_svd
+
+    def sort_by_date(df):
+        """ sort the outpput by date and return the sparse, print which row the "test data"
+            starts on"
+        """
+        
+        idx_start = df.date.eq(test_date).idxmax()
+        #idx_end = df.date.eq('2020-04-01').idxmax()
+        return idx_start
+
+    def save_outputs(svd):
+        
+        labels = df['cites_per_year'].to_numpy()
+        paper_ids = sparse_df.index.to_list()
+        outLoc = 'one_hot_encoded_data_v2'
+        
+        if svd == False:
+            col_names = sparse_df.columns.to_list()
+            bow_mat_X = sparse_df.sparse.to_coo()
+            bow_mat_X = bow_mat_X.tocsc()
+            idx = sort_by_date(df)
+            fList = [col_names, labels, paper_ids, idx]
+            nList = ["col_names", "labels", "paper_ids", "idx"]
+            path = outLoc + '//' + 'bow_mat_X.npz'  
+            scipy.sparse.save_npz(path, bow_mat_X)
+        
+        else:
+            fList = [X_svd, labels, paper_ids]
+            nList = ["X_svd", "labels", "paper_ids"]
+        
+        saveOutput2(fList,nList,outLoc) 
+        return None
+
+    sparse_df = process_title(df).join(process_journals(df), lsuffix='_left', rsuffix='_right')
+    sparse_df = sparse_df.join(process_authors(df), lsuffix='_left', rsuffix='_right')
+    sparse_df = sparse_df.join(process_year(df), lsuffix='_left', rsuffix='_right')
+    sparse_df = sparse_df.join(process_author_ids(df), lsuffix='_left', rsuffix='_right')
+    sparse_df = sparse_df.join(process_publisher(df), lsuffix='_left', rsuffix='_right')
+    sparse_df = sparse_df.join(process_pages(df), lsuffix='_left', rsuffix='_right')
+    # converting to sparse 
+
+    if svd == True:
+        X_svd = do_svd(sparse_df, 100)
+
+    save_outputs(svd)
+
+    return None
 
 def add_author_ids(df):
     """ loads pickle with latest author id, adds these ids to the df
@@ -985,14 +1244,12 @@ def add_author_ids(df):
     #df = df.join(s_authors)
     
     
-def run_script_make_fit_pipe():
+def run_script():
     """
     currently outdated.
     runs everything in if __name__ == "__main__"
         want to be able to call this whole process from the build model predict script
 
-
-    moving away from the custom wrappers for xgb here
 
     Returns
     -------
@@ -1000,67 +1257,41 @@ def run_script_make_fit_pipe():
 
     """
     
+    file_name = "df_select_06_5-4.csv"
     cwd = os.getcwd()
     path = cwd + "\\data_subset\\"
-    file_name = 'df_select_smaller_5-4.csv' #"df_select_06_5-4.csv" 
     df = pd.read_csv(path + file_name)
     
-    df, y = prep_df(df)
-
-    #converting to classes
-    y = set_classes(y, 10, 10)
-
-    idx = get_idx_for_year(df, '2019-07-01')
+    cols_to_drop = ['Unnamed: 0', 'title_main', 'Conference', 'Source', 'book', \
+                'urlID', 'citedYear']
+    df = df.drop(labels = cols_to_drop, axis = 1)
     
-    df_train = df.iloc[:idx]
-    y_train = y[:idx]
-    df_test = df.iloc[idx:]
-    y_test = y[:idx]
+    df['year'] = df['year'].astype(int)
+    df = df[df['date'] < '2020-06-01']
+    df = df.sort_values(by = ['date']) ### added this to manually select the more recent articles ad the test set
+    df = df.reset_index()
     
-    transformers_to_use = {'TitleTransformer': TitleTransformer(),#,\
-                           'JournalTransformer': JournalTransformer(),
-                           'AuthorIdTransformer': AuthorIdTransformer(),
-                           'YearTransformer': YearTransformer(),
-                           'PublisherTransformer': PublisherTransformer(),
-                           'PageTransformer': PageTransformer(),
-                           'AuthorTransformer': AuthorTransformer()}
-        
-    transformer = MainTransformer(transformers_to_use)
+    df['year'] = df['year'].astype(str)
+    df = add_author_ids(df)
     
-    # pipe = Pipeline([
-    #     ('main_transformer', transformer),
-    #     ('svd', TruncatedSVD(2))
-    #     ('oversampler', RandomOverSampler(sampling_strategy='minority')),
-    #     ('predictor', RidgeClassifier()),
-    #     #('estiamtor', ClassifierWrapper(RidgeClassifier(), \
-    #     #         RandomOverSampler(sampling_strategy = 'minority'))),
-    # ])
+    cols_to_str = ['Journal', 'Authors']
+    for col in cols_to_str:
+        df[col] = df[col].astype(str)
+    #df = df.sample(frac = 1) # commented this out 4-29
     
-    #make_pipe from imbalance learn has different snytax
-    pipe = make_pipeline(transformer, TruncatedSVD(2), RandomOverSampler(sampling_strategy='minority'),\
-                         RidgeClassifier())
-
-    param_grid = {'ridgeclassifier__alpha': np.logspace(0, 3, 4)}
-
-    gs_est = RandomizedSearchCV(pipe, param_grid, cv=3, n_jobs=2, verbose=1, scoring = 'roc_auc', n_iter = 4)
-
-    gs_est.fit(df_train.copy(), y_train)
+    #df = df.iloc[0:1000]
+    #df = df.iloc[0:1000]
     
-    print(gs_est.best_params_)
-
-    #pipe.fit(X = df_train.copy(), y = y_train)
+    #df = pd.read_csv("cleaned_data//df_for_results__28-03-2021 10_02_35.csv")
+    #df = df.iloc[0:10000]
     
-    #test_out = pipe.predict(df_test.copy())
+    ### droping some cols we aren't using in the hopes that this runs faster
     
-    from sklearn.metrics import precision_score, recall_score, accuracy_score
-
-    print(gs_est.get_params())
-
-    return gs_est
-
-    
-    
-
+    #df.reset_index()
+    #categorical_features = ['year','Authors','Journal']
+    test_date = '2019-05-01'
+    df = df[(df['cites_per_year'] != np.inf) & (df['cites_per_year'] != -np.inf)]
+    process_cols(df, test_date)
     
 def load_from_email_predict(pipe):
     cols_to_return = ['titleID',"title_main", 'Authors', 'Journal', "Conference", "Source", "book", \
@@ -1089,56 +1320,43 @@ if __name__ == "__main__":
     import xgboost as xgb
     from xgboost import XGBClassifier
     from xgboost import XGBRegressor
+    #run_script()
+    cwd = os.getcwd()
+    path = cwd + "\\data_subset\\"
+    file_name = "df_select_06_5-4.csv"
+    df = pd.read_csv(path + file_name)
     
-    from sklearn.linear_model import RidgeCV
-    from sklearn.linear_model import RidgeClassifier
-    
-    from sklearn.model_selection import GridSearchCV, RandomizedSearchCV
-    from imblearn.over_sampling import RandomOverSampler
-    from imblearn.pipeline import make_pipeline #
-    
-    pipe = run_script_make_fit_pipe()
-#     cwd = os.getcwd()
-#     path = cwd + "\\data_subset\\"
-#     file_name = "df_select_06_5-4.csv"
-#     df = pd.read_csv(path + file_name)
-    
-#     df, y = prep_df(df)
+    df, y = prep_df(df)
 
-#     idx = get_idx_for_year(df, '2019-07-01')
+    idx = get_idx_for_year(df, '2019-07-01')
     
-#     df_train = df.iloc[:idx].copy()
-#     y_train = y[:idx]
-#     df_test = df.iloc[idx:].copy()
-#     y_test = y[:idx]
-    
-#     transformers_to_use = {'TitleTransformer': TitleTransformer(),\
-#                            'JournalTransformer': JournalTransformer(),
-#                            'AuthorIdTransformer': AuthorIdTransformer(),
-#                            'YearTransformer': YearTransformer(),
-#                            'PublisherTransformer': PublisherTransformer(),
-#                            'PageTransformer': PageTransformer(),
-#                            'AuthorTransformer': AuthorTransformer()}
+    transformers_to_use = {'TitleTransformer': TitleTransformer(),\
+                           'JournalTransformer': JournalTransformer(),
+                           'AuthorIdTransformer': AuthorIdTransformer(),
+                           'YearTransformer': YearTransformer(),
+                           'PublisherTransformer': PublisherTransformer(),
+                           'PageTransformer': PageTransformer(),
+                           'AuthorTransformer': AuthorTransformer()}
         
-#     transformer = MainTransformer(transformers_to_use)
+    transformer = MainTransformer(transformers_to_use)
     
-#     pipe = Pipeline([
-#         ('main_transformer', transformer),
-#         ('predictor', runXGBRegress(idx))
-#     ])
+    pipe = Pipeline([
+        ('main_transformer', transformer),
+        ('predictor', runXGBRegress(idx))
+    ])
 
-#     pipe.fit(X = df.copy(), y = y)
+    pipe.fit(X = df.copy(), y = y)
     
-#     df_test = df.iloc[idx:]
-#     y_test = y[idx:]
-#     test_out = pipe.predict(df_test.copy())
+    df_test = df.iloc[idx:]
+    y_test = y[idx:]
+    test_out = pipe.predict(df_test.copy())
     
-#     import numpy as np
-#     from sklearn.metrics import precision_score, recall_score, accuracy_score
+    import numpy as np
+    from sklearn.metrics import precision_score, recall_score, accuracy_score
 
 
-# else:
-#     print('load the data, pipe, and call predict')
+else:
+    print('load the data, pipe, and call predict')
     # y_test = set_classes(y_test, 10, 10)
 
     # print("Precision = {}".format(precision_score(y_test, test_out, average='macro')))
