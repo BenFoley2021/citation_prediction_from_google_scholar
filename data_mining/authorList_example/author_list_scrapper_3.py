@@ -2,14 +2,6 @@
 """
 Created on Sun Mar  7 17:36:34 2021
 
-author_list_2
-
-need to add the title of every paper from an author to that authors data, want to track authors by key in addition to name
-
-5-3 adding a thing to check if we got a 404, need to mark that author as bad in the db
-
-the 404 page has the text "\n\nError 404"
-
 @author: Ben
 """
 
@@ -90,7 +82,7 @@ class pathHeadA():
     def are_getting_useful(self, tempDict):
         """ there is often lots of junk at the bottom of authors gs pages, can't afford to waste time on it
             
-            Junk is considered to be: works which weren't published in a journal, confrence, patent office'
+            Junk is considered to be: works which weren't published in a journal, patent office'
             Confrence presentations which were never cited (there are lots of these, need to cut them off at some
             point), really old papers (removing these will be biasing the data, but often these were published before
             before citations were electronically track, so theirs won't be accurate anyway'), Non-english (lots of these)
@@ -390,7 +382,12 @@ class pathHeadA():
                     return False
 
     def getInfoFromPapers(self,papers):
-        """ gets all necssary info and puts in a dict. like parse papers from paperGraphScrapper
+        """ gets all necssary info and puts in a dict. like parse papers from paperGraphScrapper.
+        
+            Click on each paper and get the meta data. Attempts to get all data feilds 
+            are in try / except statements, missing or oddly formatted data is recorded as exception.
+            Checks to see if are scrapping junk after each click, returns if yes. Several time delays
+            are hardcoded in in order to ensure page has time to load.
         
         things we need: 
             paper ID
@@ -408,8 +405,8 @@ class pathHeadA():
     
         Parameters
         ----------
-        papers : TYPE
-            DESCRIPTION.
+        papers : selenium web elements
+            Each paper found on the current authors gs page.
     
         Returns
         -------
@@ -464,7 +461,7 @@ class pathHeadA():
             self.papersThisAuthor = []
         def get_data():
             # actually gets data
-                            # for the rest of the things, we want to limit our search the parent node which contains 
+            # for the rest of the things, we want to limit our search the parent node which contains 
                 # the data, instead of the whole page
             self.papers_got += 1 # as long as we can get title that means we at least loaded the page
             
@@ -655,7 +652,21 @@ def isFloat(numIn): # simple function to check if str can be converted to float
         return None
 
 def getAllPapers(crawler):
+    ''' Gets all papers on the authors page, records author information.
     
+
+    Parameters
+    ----------
+    crawler : Custom object
+
+    Returns
+    -------
+    papers : list of Selenium webelements
+        Webelement corresponding to each paper, clickable.
+    author_info : Dict
+        Info on author.
+
+    '''
     time.sleep(2)
     author_info = getAuthorInfo(crawler)
     showMore = True
@@ -690,8 +701,10 @@ def getAllPapers(crawler):
     return papers, author_info
 
 def is_author_sketchy(papers,author_info):
-    import re # hooray I was supposed to get practice with re for tdi 
+    import re 
     ### ad hoc function to determine if the author is sketchy or isn't at an american / european ish insitution
+    ### this helps keep the breadth first search from branching out, and increases the chance that
+    ### things will be in english
     def is_author_usa(author_info):
         #checks to see if anything in the ver_emial or rank indicates non-us/eu ish instution
         for key in author_keys_to_check:
@@ -708,7 +721,7 @@ def is_author_sketchy(papers,author_info):
                     "Lucknow", "Jaipur"]
 
     # chinese_cities = ["China" , "Chinese", "Shanghai", "Beijing", "Chongqing", "Tianjin", "Guangzhou", \
-    #               "Shenzhen", "Chengdu", "Nanjing", "Wuhan"]
+    #               "Shenzhen", "Chengdu", "Nanjing", "Wuhan"] # need chinese researchers for perovskite
     other_places = ["indonesia", "china", "india", "malaysia", "africa", "Guatemala", "Nigeria", "brazil", \
                     "chile", "Brasília", "Brasilia", "mexico"]
         
@@ -870,12 +883,14 @@ def mainPaperScrapeLoop(dbA_path: str, dbB_path: str, main_loop_error: int, erro
             
             #capatcha(crawler) # checking to see if there is a capatcha
             print(crawler.curAuthorID)
-            papers, author_info = getAllPapers(crawler)
-
+            papers, author_info = getAllPapers(crawler) #get the element for each paper, and the author info
+                                    # at this point we haven't clicked on any of the papers yet
             if author_info['sketchy'] == False and author_info['usa'] == True: # if the author looks suspicious then we skip
-                print('skipped author')
+                    # 'usa' now refers to a bunch of other places besides just the usa
+                    
                 if len(papers) > 0:
-                    pathHeadA.getInfoFromPapers(crawler, papers)
+                    pathHeadA.getInfoFromPapers(crawler, papers) # this is core of the scrapper,
+                                # get meta data on each paper on the authors gs page
                     crawler.author_info.update({crawler.curAuthorID: author_info})
                     crawler.author_info[crawler.curAuthorID]['all_papers'] = \
                        crawler.papersThisAuthor
@@ -890,7 +905,9 @@ def mainPaperScrapeLoop(dbA_path: str, dbB_path: str, main_loop_error: int, erro
                 else:
                     missed.append(crawler.curAuthorID)     
                 
-                if len(crawler.paperDict) > paper_save_param:
+                if len(crawler.paperDict) > paper_save_param: # if have a certain number of papers,
+                    # dump to disk. Saving early and often makes the scrapper more resilient to crashes
+
                     saveCurrent(crawler.paperDict, 'paperDictA') ### dumping to disk
                     crawler.paperDict = {}  # reseting
                     saveCurrent(crawler.author_info, 'author_info') ### dumping to disk
@@ -900,6 +917,9 @@ def mainPaperScrapeLoop(dbA_path: str, dbB_path: str, main_loop_error: int, erro
                 pathHeadA.update_db_one_author(crawler)
 
     except:
+        ''' If something goes wrong (this can include a keyboard interupt in the case the
+            scrapper is being manually stopped), dump data to disk, restart webdriver, wait awhile
+        '''
         print('exception')
         print(traceback.format_exc())
         crawler.driver.quit()
@@ -925,7 +945,8 @@ if __name__ == "__main__":
     scrape = True
     main_loop_error = 0
     error_log = []
-    while scrape == True:
+    while scrape == True: # restart scrapper a fixed number of times. Needed if internet 
+                        # connection unstable or if hit oddly formatted gs author pages
         crawler = mainPaperScrapeLoop(dbA_path, dbB_path, main_loop_error, error_log)
         saveCurrent(crawler.author_info, 'author_info') 
         saveCurrent(crawler.paperDict, 'paperDictA')

@@ -2,84 +2,6 @@
 """
 Created on Thu Mar  4 12:18:53 2021
 
-3-4 7 pm: somehow got a cyclic graph in the object list, pickle hit recursoin limit
-need to step through and test with something that has a smaller number of citations
-
-should probably just change to useing a dictionary instead of the paper object.
-
-to do today:
-    error handling. the scraper can't stop if it hits a bad url
-    need to have a criteria for moving to the next page of a paper, and 
-    the next paper in the stack'
-    
-    if have tried three times on one page move on
-    if have two pages in a row which don't work, move onto next paper
-
-    non english papers are a problem
-    
-    if using dictionaries, want to remember the order that items were added to the dictionary so
-    can transfer to the stack in the right order
-
-    3-5 1 pm: did these
-        check visited dict before doing a thing
-        keep track of which papers cite which
-        check size of mainPaperDict and dump to disk if too large
-        check size of visited dict and stop program if too large
-        
-    3-5 2 pm: this is V3
-        need to change parse papers to get the leafs of the graph. use the paper ID in place of URLid
-        when adding to the stack, check if can convert to float before adding.
-        
-        
-    3-5 3 pm. issue that poped up during testing is that the proxy client doesn't return the full
-        html. the ''id': "gs_res_ccl_mid" isn't there. stuff is visible in the url and I can get it
-        with requests.
-        
-        this proxy sucks. 
-        
-        ############ do this, will help isolate real errors from sloppy scripting
-        should seperate by if we are on the last page
-        id: gs_res_ccl_bot => id: gs_nm => id: gs_nml => class="gs_nma"
-        gs_mna will have an <a> tag if we aren't at that page, b if we are'
-        the b tags have an interger, the others have an href
-        
-        we need to check the soup to see if the page is the last, if it is, 
-        return current stuff from crawlPaper
-            find out if at end B4 going to the next page
-
-
-### actual test 6 pm 3-5. abstract words fails a lot. 
-### I probably should make an object to keep track of the current state
-### the criteria for when to give on a paper are all over the place
-### and this object would also hold the stop critera to make sure im not somewhere
-### where I already have almost all the cites
-
-### V3_1
-    convert all metrics which track things related to skip/ stop condittions into one container object
-    make seperate dictionariares for papers which are going in the stack and those that aren't'
-    
-    keep track of how many edges lead to papers we've already seen' if a lot probably don't need to put that 
-    paper in the stack'
-
-
-    to do: make sure getting leafs, if no citations i think the paper id is the index in the stack
-
-
-# need a general purpose termination condition which stops if the whole thing
-# gets messed up
-        ### number of times returned no new papers > X stop the whole script
-
-V3_2: the pathHead.visited is now going to be a connection to an sqlite db
-        will check agianst all other instances. if the database fails can resonctrct
-        from the other outfiles
-
-how to check if key/index exists in sql 
-resources 
-https://stackoverflow.com/questions/52940433/how-can-i-find-out-if-an-index-has-been-created-on-a-sqlite-table
-
-3_4 putting paperIDs (not the urlId, the paper id) in the paperidcited table of the db
-3_5 changing the "if yeild == 0 return " statement in paper crawl. don't want to miss papers
-    this will use more api calls, but whatever. don't want paths ending prematurely '
 
 @author: bcyk5
 """
@@ -640,11 +562,12 @@ def mainCrawl(startID: str, dbPath: str):
         Parameters
         ----------
         masterPaperDict : dict
-            DESCRIPTION.
+            Records of all papers and associated metadata found.
+        stack: list, This is actually a queue
+            list of nodes to go to next in the breadth first search
         citedByIdDict : dict
-            DESCRIPTION.
-        curPathHead : object
-            DESCRIPTION.
+            The paper ids that each paper visited has been cited by. Can be used to reconstruct graph.
+        curPathHead : custom object
 
         Returns
         -------
@@ -762,41 +685,3 @@ if __name__ == "__main__":
     
     
     
-# sql = "SELECT * FROM " + 'paperAuthor'
-
-# with curPathHead.visited as con:
-#     data = con.execute(sql)
-#     for row in data:
-#         print(row)
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    # mainDict.update(masterPaperDict.papersToStack) # update the main dictionary 
-    # mainDict.update(masterPaperDict.papersNotStack) # update the main dictionary 
-    # saveCurrent(mainDict, 'paperDict')
-    
-    
-    ## getting each paper
-    
-    #for the actual articles, they are under id="gs_res_ccl_mid"
-    # each artil
-    
-# class="gs_or_cit gs_nph" node contains an href with the number needed to make the url for 
-# that paper 
-    
-# href="/scholar?cites=7459309748507948956&as_sdt=5,48&sciodt=5,48&hl=en" 
-# href="/scholar?cites=10848829474474129573&as_sdt=5,48&sciodt=5,48&hl=en" 
-     
-### navigating pagination 
-# https://scholar.google.com/scholar?start=0&hl=en&as_sdt=5,48&cites=8957576256328562533&scipsc= 
-# https://scholar.google.com/scholar?start=10&hl=en&as_sdt=5,48&cites=8957576256328562533&scipsc= 
-# https://scholar.google.com/scholar?start=20&hl=en&as_sdt=5,48&cites=8957576256328562533&scipsc= 
-# https://scholar.google.com/scholar?start=30&hl=en&as_sdt=5,48&cites=8957576256328562533&scipsc= 
-# https://scholar.google.com/scholar?start=120&hl=en&as_sdt=5,48&cites=8957576256328562533&scipsc= 
