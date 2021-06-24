@@ -6,4 +6,4 @@ The data mining scheme is in */data_mining
 The process of cleaning, transforming, and fitting a model to the data is in data_cleaning_and_analysis. Ongoing development here to 
 improve model accuracy.
 
-The email bot and user interface is in user interface, still under development.
+The email bot and UI are in user interface, still under development.
