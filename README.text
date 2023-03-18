@@ -1,7 +1,12 @@
 # citation_prediction_from_google_scholar
- getting data on publications from google scholar and building an ML model to predict citations. Please see the project summary jupyter notebook in 
- /include-summary-notebook branch.
 
+ Dear reader,
+ 
+ Thanks taking a look at my project, for a summary of what's in this repo please go to the 'include-summary-notebook' branch and
+ open the jupyer notebook named Project Summary VIEW ME
+ 
+ Quick overview:
+ getting data on publications from google scholar and building an ML model to predict citations. 
 
 The data mining scheme is in */data_mining
 
